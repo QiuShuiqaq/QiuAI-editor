@@ -1,0 +1,84 @@
+/* A4 Page Simulation Styles */
+.editor-area {
+  position: relative;
+}
+
+/* A4 page scaling for screen */
+@media screen {
+  .a4-page-wrapper {
+    width: var(--a4-width);
+    min-height: var(--a4-height);
+    padding: var(--page-margin-top) var(--page-margin-right) var(--page-margin-bottom) var(--page-margin-left);
+    margin: 0 auto;
+    background: var(--page-bg);
+    box-shadow: var(--page-shadow);
+    position: relative;
+  }
+}
+
+/* Page break indicator */
+.page-break {
+  position: relative;
+  height: 2px;
+  background: transparent;
+  border-top: 2px dashed #d9d9d9;
+  margin: 8px 0;
+}
+
+.page-break::after {
+  content: '—— 分页 ——';
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--editor-bg);
+  padding: 0 8px;
+  font-size: 11px;
+  color: #999;
+}
+
+/* DPI-aware scaling (96dpi default, adjust for high-DPI displays) */
+@media screen and (min-resolution: 120dpi) {
+  /* On high-DPI displays, CSS mm units are already scaled */
+}
+
+/* Print layout */
+@media print {
+  @page {
+    size: A4;
+    margin: 25.4mm 31.7mm;
+  }
+
+  .a4-page-wrapper {
+    width: auto;
+    min-height: auto;
+    padding: 0;
+    box-shadow: none;
+    margin: 0;
+  }
+
+  .page-break {
+    page-break-after: always;
+    border: none;
+    height: 0;
+    margin: 0;
+  }
+
+  .page-break::after {
+    display: none;
+  }
+
+  .image-slot, .table-slot {
+    break-inside: avoid;
+  }
+
+  .editor-area {
+    background: #fff !important;
+    padding: 0 !important;
+  }
+}
+
+/* Ensure content stays within A4 page */
+.a4-page-wrapper * {
+  max-width: 100%;
+}

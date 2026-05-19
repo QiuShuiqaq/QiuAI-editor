@@ -1,0 +1,350 @@
+/* TipTap Editor - Typography styles */
+
+.tiptap-editor {
+  outline: none;
+  min-height: 600px;
+  font-family: var(--font-body);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height);
+}
+
+/* Headings */
+.tiptap-editor h1 {
+  font-family: var(--font-heading);
+  font-size: var(--font-size-h1);
+  font-weight: bold;
+  text-align: center;
+  margin: 24px 0 16px;
+  line-height: 1.4;
+}
+
+.tiptap-editor h2 {
+  font-family: var(--font-heading);
+  font-size: var(--font-size-h2);
+  font-weight: bold;
+  margin: 20px 0 12px;
+  line-height: 1.4;
+}
+
+.tiptap-editor h3 {
+  font-family: var(--font-heading);
+  font-size: var(--font-size-h3);
+  font-weight: bold;
+  margin: 16px 0 10px;
+  line-height: 1.4;
+}
+
+/* Paragraph styles are set via CustomParagraph attributes (inline style on <p>) */
+/* No global p { text-indent, margin, line-height } — these are per-paragraph */
+
+/* CJK text justification (matches Word 2019 behavior) */
+.tiptap-editor p[style*="text-align:justify"],
+.tiptap-editor p[style*="text-align: justify"] {
+  text-justify: inter-ideograph;
+}
+
+/* Bold, italic */
+.tiptap-editor strong { font-weight: bold; }
+.tiptap-editor em { font-style: italic; }
+
+/* Highlighted data (REVIEW marks) */
+.tiptap-editor mark[data-type="review"] {
+  background: #fff566;
+  border-bottom: 2px solid #faad14;
+  padding: 1px 2px;
+  cursor: pointer;
+}
+.tiptap-editor mark[data-type="review"]:hover {
+  background: #ffe58f;
+}
+
+/* Selection */
+.tiptap-editor ::selection {
+  background: #bae0ff;
+}
+
+/* Image in editor */
+.tiptap-editor img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 12px auto;
+  border-radius: 4px;
+}
+
+/* Placeholder */
+.tiptap-editor p.is-editor-empty:first-child::before {
+  color: #bfbfbf;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  font-style: italic;
+}
+
+/* ===== Word-like Lists ===== */
+.tiptap-editor ul {
+  list-style-type: disc;
+  padding-left: 24pt;
+  margin: 4px 0;
+}
+.tiptap-editor ul ul { list-style-type: circle; }
+.tiptap-editor ul ul ul { list-style-type: square; }
+.tiptap-editor ol {
+  list-style-type: decimal;
+  padding-left: 24pt;
+  margin: 4px 0;
+}
+.tiptap-editor ol ol { list-style-type: lower-alpha; }
+.tiptap-editor ol ol ol { list-style-type: lower-roman; }
+.tiptap-editor li {
+  margin: 2px 0;
+  line-height: inherit;
+}
+.tiptap-editor li p {
+  margin: 0;
+  text-indent: 0;
+}
+
+/* ===== Word-like Tables ===== */
+.tiptap-editor .tableWrapper {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+.tiptap-editor table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0;
+}
+.tiptap-editor table td,
+.tiptap-editor table th {
+  border: 1px solid #000;
+  padding: 4pt 8pt;
+  position: relative;
+  min-width: 40px;
+  vertical-align: top;
+  word-break: break-word;
+  font-size: 10.5pt;
+}
+.tiptap-editor table th {
+  background: #f5f5f5;
+  font-weight: bold;
+  text-align: center;
+}
+/* Selected cell */
+.tiptap-editor .selectedCell {
+  background: #d3e3fd;
+}
+/* Table resize handle */
+.tiptap-editor .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: #1677ff;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 20;
+}
+.tiptap-editor table th:hover .column-resize-handle,
+.tiptap-editor table td:hover .column-resize-handle {
+  opacity: 1;
+}
+
+/* ===== Paragraph Borders & Shading ===== */
+.tiptap-editor p[style*="border"] {
+  padding: 4pt 8pt;
+}
+.tiptap-editor p[style*="background"] {
+  padding: 4pt 8pt;
+}
+
+/* Superscript / Subscript */
+.tiptap-editor sup { font-size: 0.75em; vertical-align: super; line-height: 1; }
+.tiptap-editor sub { font-size: 0.75em; vertical-align: sub; line-height: 1; }
+
+/* Links */
+.tiptap-editor a.editor-link { color: #1677ff; text-decoration: underline; cursor: pointer; }
+.tiptap-editor a.editor-link:hover { color: #0958d9; }
+
+/* Footnotes */
+.tiptap-editor .footnote-mark { color: #1677ff; font-size: 0.75em; cursor: pointer; }
+.tiptap-editor .page-number-field { color: #999; font-size: 0.85em; }
+
+/* ===== Columns ===== */
+.tiptap-editor.columns-mode {
+  column-count: var(--editor-columns, 1);
+  column-gap: var(--editor-column-gap, 12mm);
+  column-rule: var(--editor-column-rule, none);
+  column-fill: balance;
+}
+
+/* ===== Drop Cap (first letter) ===== */
+.tiptap-editor p.drop-cap::first-letter {
+  float: left;
+  font-size: 3.5em;
+  line-height: 0.8;
+  padding-right: 4px;
+  font-weight: bold;
+  color: #333;
+}
+
+/* ===== Line Numbers ===== */
+.tiptap-editor.line-numbers {
+  counter-reset: line;
+  padding-left: 36px;
+  position: relative;
+}
+.tiptap-editor.line-numbers p {
+  counter-increment: line;
+}
+.tiptap-editor.line-numbers p::before {
+  content: counter(line);
+  position: absolute;
+  left: 4px;
+  width: 28px;
+  text-align: right;
+  font-size: 9pt;
+  color: #999;
+  font-family: 'Courier New', monospace;
+}
+
+/* ===== Watermark layer ===== */
+.editor-watermark {
+  display: var(--watermark-display, none);
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%) rotate(var(--watermark-rotation, -30deg));
+  font-size: 80px;
+  color: var(--watermark-color, #d0d0d0);
+  opacity: var(--watermark-opacity, 0.15);
+  pointer-events: none;
+  z-index: 1;
+  white-space: nowrap;
+  font-weight: bold;
+  user-select: none;
+}
+.editor-watermark::after {
+  content: var(--watermark-text, '');
+}
+
+/* ===== Spell check underlines ===== */
+.tiptap-editor .spell-error {
+  text-decoration: wavy underline #ff4d4f;
+  text-underline-offset: 2px;
+}
+
+/* ===== Comment/Annotation marks ===== */
+.tiptap-editor .comment-mark {
+  background: #ffff99;
+  border-bottom: 2px dotted #faad14;
+  cursor: pointer;
+}
+
+/* ===== Bookmark indicator ===== */
+.tiptap-editor .bookmark-indicator {
+  background: #e6f7ff;
+  border-left: 3px solid #1677ff;
+  padding-left: 4px;
+}
+
+/* ===== Reading Mode ===== */
+.reading-mode .ribbon-container { display: none; }
+.reading-mode .a4-page-wrapper {
+  column-count: 2;
+  column-gap: 40px;
+  column-rule: 1px solid #e0e0e0;
+}
+
+/* ProseMirror */
+.ProseMirror { outline: none; min-height: 600px; }
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: #adb5bd;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ===== Structured Placeholder Styles ===== */
+
+.tiptap-editor p.subtitle-text {
+  color: #8c8c8c;
+  font-style: italic;
+  font-size: 14pt;
+  margin: 8px 0 16px;
+  text-indent: 2em;
+  border-left: 3px solid #e0e0e0;
+  padding-left: 12px;
+}
+
+.tiptap-editor p.body-text {
+  color: #bfbfbf;
+  margin: 8px 0;
+  text-indent: 2em;
+}
+
+.tiptap-editor p.image-text {
+  color: #8c8c8c;
+  font-size: 10.5pt;
+  margin: 4px 0 16px;
+  text-indent: 0;
+  text-align: center;
+}
+
+.tiptap-editor p.table-text {
+  color: #8c8c8c;
+  font-size: 10.5pt;
+  margin: 4px 0 16px;
+  text-indent: 0;
+  text-align: center;
+}
+
+/* ===== Image Placeholder ===== */
+.image-placeholder-node {
+  margin: 16px auto; border: 2px dashed #bfbfbf; border-radius: 8px;
+  padding: 8px; text-align: center; background: #fafafa;
+  transition: border-color .2s, background .2s; cursor: pointer; max-width: 90%;
+}
+.image-placeholder-node:hover { border-color: #1677ff; background: #f0f5ff; }
+.image-placeholder-box {
+  min-height: 120px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 24px;
+}
+.image-placeholder-icon { font-size: 48px; margin-bottom: 8px; opacity: 0.4; }
+.image-placeholder-hint { font-size: 13px; color: #999; }
+.image-placeholder-caption {
+  text-align: center; font-size: 10.5pt; color: #333; margin-top: 8px;
+  padding: 4px 0; border-top: 1px solid #e8e8e8; font-weight: 500; outline: none; cursor: text;
+}
+.image-placeholder-caption:empty::before {
+  content: '图编号 图片标题（双击编辑）'; color: #bfbfbf;
+}
+
+/* ===== Table Placeholder ===== */
+.table-placeholder-node { margin: 16px auto; max-width: 100%; }
+.table-placeholder-caption {
+  text-align: center; font-size: 10.5pt; color: #333; margin-top: 6px;
+  padding: 4px 0; font-weight: 500; outline: none; cursor: text;
+}
+.table-placeholder-caption:empty::before {
+  content: '表编号 表格标题（双击编辑）'; color: #bfbfbf;
+}
+.three-line-placeholder-table { border-collapse: collapse; width: 100%; }
+.three-line-placeholder-table thead { border-top: 1.5pt solid #000; border-bottom: 0.75pt solid #000; }
+.three-line-placeholder-table tbody { border-bottom: 1.5pt solid #000; }
+.three-line-placeholder-table th, .three-line-placeholder-table td {
+  padding: 4pt 8pt; text-align: center; font-size: 10.5pt; border: none;
+}
+.three-line-placeholder-table td { color: #bfbfbf; min-width: 60px; }
+
+/* ===== Spell Check & Equations & Page Border ===== */
+.tiptap-editor .spell-error { text-decoration: wavy underline #ff4d4f; }
+.tiptap-editor .math-inline { font-family: "Times New Roman",serif; font-style:italic; color:#333; padding:0 2px; }
+.tiptap-editor .math-block { display:block; text-align:center; margin:12px 0; font-family:"Times New Roman",serif; font-size:110%; color:#333; }
+.a4-page-wrapper { --page-border:none; --page-bg-color:#fff; }
+.a4-page-wrapper.has-page-border { border:var(--page-border); }
+.a4-page-wrapper.has-page-shadow { box-shadow:var(--page-border-shadow); }
+

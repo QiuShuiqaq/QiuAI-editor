@@ -1,0 +1,32 @@
+appId: com.qiuai.editor
+productName: 秋AI编辑器
+copyright: Copyright © 2025 QiuAi
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - packages/main/dist/**/*
+  - packages/renderer/dist/**/*
+  - packages/shared/dist/**/*
+  - node_modules/**/*
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icons/icon.ico
+  artifactName: ${productName}-${version}-Setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: 秋AI编辑器
+
+extraMetadata:
+  main: packages/main/dist/index.js
+
+electronVersion: "^33.0.0"
