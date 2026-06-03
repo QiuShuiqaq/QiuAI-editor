@@ -77,6 +77,13 @@ interface StreamedSectionGeneration {
   paperSpineEnhancement?: PaperSpineSectionMemory['enhancement'];
 }
 
+interface SectionGenerationBudget {
+  maxChars: number;
+  hardStopChars: number;
+  maxParagraphs: number;
+  maxTokens: number;
+}
+
 export const FULL_PAPER_PROGRESS_EVENT = 'qiuai:full-paper-progress';
 
 function sleep(ms: number): Promise<void> {
@@ -193,6 +200,102 @@ function splitTextForTyping(text: string): string[] {
   }
 
   return chunks.length > 0 ? chunks : [normalized];
+}
+
+function getSectionGenerationBudget(node: FrameworkNode): SectionGenerationBudget {
+  const hasChildren = node.children.length > 0;
+
+  if (node.level <= 1) {
+    return hasChildren
+      ? { maxChars: 180, hardStopChars: 240, maxParagraphs: 1, maxTokens: 420 }
+      : { maxChars: 260, hardStopChars: 320, maxParagraphs: 2, maxTokens: 520 };
+  }
+
+  if (node.level === 2) {
+    return hasChildren
+      ? { maxChars: 240, hardStopChars: 320, maxParagraphs: 2, maxTokens: 520 }
+      : { maxChars: 420, hardStopChars: 520, maxParagraphs: 2, maxTokens: 700 };
+  }
+
+  if (node.level === 3) {
+    return hasChildren
+      ? { maxChars: 320, hardStopChars: 420, maxParagraphs: 2, maxTokens: 700 }
+      : { maxChars: 560, hardStopChars: 680, maxParagraphs: 3, maxTokens: 900 };
+  }
+
+  return hasChildren
+    ? { maxChars: 360, hardStopChars: 460, maxParagraphs: 2, maxTokens: 760 }
+    : { maxChars: 620, hardStopChars: 760, maxParagraphs: 3, maxTokens: 960 };
+}
+
+function truncateAtSentenceBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text.trim();
+  }
+
+  const slice = text.slice(0, maxChars);
+  const punctuationMatches = [...slice.matchAll(/[。！？；.!?;](?=[^。！？；.!?;]*$)/gu)];
+  const lastMatch = punctuationMatches.at(-1);
+  if (lastMatch?.index !== undefined) {
+    return slice.slice(0, lastMatch.index + 1).trim();
+  }
+
+  const commaMatches = [...slice.matchAll(/[，,](?=[^，,]*$)/gu)];
+  const lastCommaMatch = commaMatches.at(-1);
+  if (lastCommaMatch?.index !== undefined && lastCommaMatch.index > Math.floor(maxChars * 0.7)) {
+    return slice.slice(0, lastCommaMatch.index + 1).trim();
+  }
+
+  return slice.trim();
+}
+
+function trimGeneratedSectionText(text: string, budget: SectionGenerationBudget, title: string): string {
+  const normalized = stripRepeatedHeading(text, title).replace(/\r/g, '').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const paragraphs = normalized
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .slice(0, budget.maxParagraphs);
+
+  if (paragraphs.length === 0) {
+    return truncateAtSentenceBoundary(normalized.replace(/\s+/g, ' ').trim(), budget.maxChars);
+  }
+
+  const kept: string[] = [];
+  let remainingChars = budget.maxChars;
+
+  for (const paragraph of paragraphs) {
+    if (remainingChars <= 0) {
+      break;
+    }
+
+    const nextParagraph = truncateAtSentenceBoundary(paragraph, remainingChars);
+    if (!nextParagraph) {
+      break;
+    }
+
+    kept.push(nextParagraph);
+    remainingChars -= nextParagraph.length;
+  }
+
+  return kept.join('\n\n').trim();
+}
+
+function buildSectionLengthGuidance(node: FrameworkNode, budget: SectionGenerationBudget): string {
+  const paragraphHint = budget.maxParagraphs <= 1 ? '1 段以内' : `不超过 ${budget.maxParagraphs} 段`;
+  return [
+    '【当前章节篇幅要求】',
+    `章节标题：${node.title}`,
+    `请只写本章节需要的正式正文，控制在 ${paragraphHint}。`,
+    `总字数控制在约 ${budget.maxChars} 字以内，不要展开成过长综述。`,
+    node.children.length > 0
+      ? '如果本章节下还有子章节，只写承上启下的简短导语，不要把子章节内容提前写完。'
+      : '如果本章节是末级标题，请直接写可用于正式文稿的主体内容，但仍保持克制和紧凑。',
+  ].join('\n');
 }
 
 function findHeadingPath(nodes: FrameworkNode[], targetId: string, trail: string[] = []): string[] {
@@ -388,6 +491,7 @@ async function generateSectionWithVisibleStreaming(args: {
   neighborSummaries: string[];
   documentPlan: string;
   aiConfig: AIConfig;
+  budget: SectionGenerationBudget;
   finalizedSectionsHtml: string[];
   decorationHtml: string;
   completedSections: number;
@@ -403,6 +507,7 @@ async function generateSectionWithVisibleStreaming(args: {
     neighborSummaries,
     documentPlan,
     aiConfig,
+    budget,
     finalizedSectionsHtml,
     decorationHtml,
     completedSections,
@@ -446,7 +551,8 @@ async function generateSectionWithVisibleStreaming(args: {
 
     streamedParts.push(chunk);
     typedChunks += 1;
-    const liveBodyText = stripRepeatedHeading(streamedParts.join(''), node.title);
+    const rawBodyText = stripRepeatedHeading(streamedParts.join(''), node.title);
+    const liveBodyText = trimGeneratedSectionText(rawBodyText, budget, node.title);
     const liveSectionHtml = `<h${sectionTitleLevel}>${escapeHtml(node.title)}</h${sectionTitleLevel}>${renderBodyHtml(
       liveBodyText,
       node.title
@@ -465,10 +571,13 @@ async function generateSectionWithVisibleStreaming(args: {
         statusText: `正在写入章节：${node.title}（第 ${typedChunks} 段）`,
       })
     );
+    if (rawBodyText.replace(/\s+/g, '').length >= budget.hardStopChars) {
+      break;
+    }
   }
 
   return {
-    bodyText: stripRepeatedHeading(streamedParts.join(''), node.title),
+    bodyText: trimGeneratedSectionText(streamedParts.join(''), budget, node.title),
     provider,
     model,
     paperSpineEnhancement,
@@ -527,8 +636,10 @@ export async function generateAndApplyFullPaperFromOutline(
     const headingPath = findHeadingPath(framework, node.id);
     const relevantChunks = retrieveRelevantChunks(allChunks, node.title, headingPath, dataKeywords, 8);
     const neighborSummaries = getNeighborSummaries(sectionSummariesMap, node.id, framework, 2);
-    const estimatedTokens = estimateContextTokens(node.title, relevantChunks, neighborSummaries, documentPlan);
-    const maxTokens = options.aiConfig.maxTokens || 8192;
+    const budget = getSectionGenerationBudget(node);
+    const sectionPlan = `${documentPlan}\n\n${buildSectionLengthGuidance(node, budget)}`;
+    const estimatedTokens = estimateContextTokens(node.title, relevantChunks, neighborSummaries, sectionPlan);
+    const maxTokens = Math.min(options.aiConfig.maxTokens || 8192, budget.maxTokens);
     const finalChunks =
       !contextFitsInWindow(estimatedTokens, maxTokens) && relevantChunks.length > 3
         ? relevantChunks.slice(0, 3)
@@ -542,8 +653,12 @@ export async function generateAndApplyFullPaperFromOutline(
       node,
       finalChunks,
       neighborSummaries,
-      documentPlan,
-      aiConfig: options.aiConfig,
+      documentPlan: sectionPlan,
+      aiConfig: {
+        ...options.aiConfig,
+        maxTokens,
+      },
+      budget,
       finalizedSectionsHtml,
       decorationHtml,
       completedSections: generatedSections.length,
@@ -619,6 +734,7 @@ export async function generateAndApplyFullPaperFromOutline(
     documentPlan,
     documentState: {
       ...currentDoc.documentState,
+      editorContent: editor?.getJSON() || currentDoc.editorContent,
       referenceMaterials,
       documentPlan,
       sectionSummaries,

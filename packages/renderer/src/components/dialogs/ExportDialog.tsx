@@ -51,6 +51,7 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
         editorContent: currentEditor?.getJSON() || latestDoc.editorContent,
         documentState: {
           ...latestDoc.documentState,
+          editorContent: currentEditor?.getJSON() || latestDoc.editorContent,
           pageCount,
         },
         updatedAt: new Date().toISOString(),

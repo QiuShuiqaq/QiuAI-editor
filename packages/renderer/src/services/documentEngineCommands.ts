@@ -176,6 +176,7 @@ async function exportCurrentDocument(format: 'docx' | 'pdf', suggestedFileName?:
     editorContent: currentEditor?.getJSON() || latestDoc.editorContent,
     documentState: {
       ...latestDoc.documentState,
+      editorContent: currentEditor?.getJSON() || latestDoc.editorContent,
       pageCount,
     },
     updatedAt: new Date().toISOString(),
@@ -478,6 +479,7 @@ export async function saveCurrentDocument(): Promise<void> {
     editorContent: editor?.getJSON() || currentDoc.editorContent,
     documentState: {
       ...currentDoc.documentState,
+      editorContent: editor?.getJSON() || currentDoc.editorContent,
       pageCount,
     },
     updatedAt: new Date().toISOString(),

@@ -17,10 +17,16 @@ function getParagraphClass(node: any): string {
   return typeof node?.attrs?.class === 'string' ? node.attrs.class.trim() : '';
 }
 
+function getMark(marks: any[], type: string): any | undefined {
+  return (marks || []).find((mark: any) => mark?.type === type);
+}
+
 function renderInlineText(child: any): string {
   const rawText = escapeHtml(child.text || '');
   const marks = child.marks || [];
   let content = rawText;
+  const textStyleMark = getMark(marks, 'textStyle');
+  const highlightMark = getMark(marks, 'highlight');
 
   if (marks.some((mark: any) => mark.type === 'bold')) {
     content = `<strong>${content}</strong>`;
@@ -32,6 +38,29 @@ function renderInlineText(child: any): string {
 
   if (marks.some((mark: any) => mark.type === 'underline')) {
     content = `<u>${content}</u>`;
+  }
+
+  if (marks.some((mark: any) => mark.type === 'strike')) {
+    content = `<s>${content}</s>`;
+  }
+
+  if (marks.some((mark: any) => mark.type === 'subscript')) {
+    content = `<sub>${content}</sub>`;
+  }
+
+  if (marks.some((mark: any) => mark.type === 'superscript')) {
+    content = `<sup>${content}</sup>`;
+  }
+
+  const inlineStyles = [
+    typeof textStyleMark?.attrs?.color === 'string' ? `color:${textStyleMark.attrs.color}` : '',
+    typeof textStyleMark?.attrs?.fontSize === 'string' ? `font-size:${textStyleMark.attrs.fontSize}` : '',
+    typeof textStyleMark?.attrs?.fontFamily === 'string' ? `font-family:${textStyleMark.attrs.fontFamily}` : '',
+    typeof highlightMark?.attrs?.color === 'string' ? `background-color:${highlightMark.attrs.color}` : '',
+  ].filter(Boolean);
+
+  if (inlineStyles.length > 0) {
+    content = `<span style="${inlineStyles.join(';')}">${content}</span>`;
   }
 
   const linkMark = marks.find((mark: any) => mark.type === 'link');

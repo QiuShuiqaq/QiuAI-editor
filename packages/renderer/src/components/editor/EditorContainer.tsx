@@ -652,6 +652,7 @@ export function EditorContainer({ zoom = 1 }: EditorContainerProps) {
             editorContent: editor?.getJSON() || currentDoc.editorContent,
             documentState: {
               ...currentDoc.documentState,
+              editorContent: editor?.getJSON() || currentDoc.editorContent,
               pageCount,
             },
             updatedAt: new Date().toISOString(),
@@ -806,7 +807,7 @@ export function EditorContainer({ zoom = 1 }: EditorContainerProps) {
     }
   }, [currentDocContent, currentDocId, editor, frameworkNodes.length, setCurrentPage, setPageCount, updateCurrentPageFromSelection, updatePageCountFromLayout]);
 
-  const renderedPageCount = Math.max(layoutResult.pageCount, pageCount);
+  const renderedPageCount = Math.max(1, layoutResult.pageCount);
   const contentHeight = renderedPageCount * fullPageHeightMm;
   const contentSurfaceHeightMm = Math.max(
     pageContentHeightMm,

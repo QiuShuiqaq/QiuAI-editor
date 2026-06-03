@@ -11,17 +11,6 @@ class ExportService {
   async exportDOCX(doc: QiuAiDocument, filePath: string): Promise<void> {
     try {
       const normalizedDoc = syncDocumentWithState(doc);
-      if (
-        normalizedDoc.documentState.authoringSource.kind === 'docx-file' &&
-        normalizedDoc.documentState.authoringSource.path
-      ) {
-        try {
-          await fs.copyFile(normalizedDoc.documentState.authoringSource.path, filePath);
-          return;
-        } catch {
-          // Fall back to reconstruction when the working DOCX is unavailable.
-        }
-      }
 
       const docxModule = await import('docx');
       const {
@@ -46,11 +35,7 @@ class ExportService {
       const footerText = '';
       const children: any[] = [];
       const editorContent = normalizedDoc.editorContent as any;
-      const sourceHtml =
-        normalizedDoc.documentState.authoringSource.kind === 'html-file' &&
-        normalizedDoc.documentState.authoringSource.path
-          ? await fs.readFile(normalizedDoc.documentState.authoringSource.path, 'utf-8')
-          : null;
+      const sourceHtml = await this.tryReadAuthoringHtml(normalizedDoc);
 
       if (normalizedDoc.title) {
         children.push(
@@ -179,19 +164,6 @@ class ExportService {
   async exportPDF(doc: QiuAiDocument, filePath: string): Promise<void> {
     try {
       const normalizedDoc = syncDocumentWithState(doc);
-      if (
-        normalizedDoc.documentState.authoringSource.kind === 'html-file' &&
-        normalizedDoc.documentState.authoringSource.path
-      ) {
-        try {
-          const sourceHtml = await fs.readFile(normalizedDoc.documentState.authoringSource.path, 'utf-8');
-          await fs.writeFile(filePath.replace(/\.pdf$/i, '.html'), sourceHtml, 'utf-8');
-          return;
-        } catch {
-          // Fall back to generated HTML when the working HTML is unavailable.
-        }
-      }
-
       const html = this.generatePrintableHTML(doc);
       await fs.writeFile(filePath.replace(/\.pdf$/i, '.html'), html, 'utf-8');
     } catch (error) {
@@ -205,22 +177,24 @@ class ExportService {
   }
 
   private async exportHTML(doc: QiuAiDocument, filePath: string, _format: string): Promise<void> {
-    const normalizedDoc = syncDocumentWithState(doc);
-    if (
-      normalizedDoc.documentState.authoringSource.kind === 'html-file' &&
-      normalizedDoc.documentState.authoringSource.path
-    ) {
-      try {
-        const sourceHtml = await fs.readFile(normalizedDoc.documentState.authoringSource.path, 'utf-8');
-        await fs.writeFile(filePath.replace(/\.(docx|pdf)$/i, '.html'), sourceHtml, 'utf-8');
-        return;
-      } catch {
-        // Fall through to regenerated HTML.
-      }
-    }
-
     const html = this.generatePrintableHTML(doc);
     await fs.writeFile(filePath.replace(/\.(docx|pdf)$/i, '.html'), html, 'utf-8');
+  }
+
+  private async tryReadAuthoringHtml(doc: QiuAiDocument): Promise<string | null> {
+    if (
+      doc.documentState.authoringSource.kind !== 'html-file' ||
+      !doc.documentState.authoringSource.path ||
+      hasMeaningfulEditorContent(doc.editorContent)
+    ) {
+      return null;
+    }
+
+    try {
+      return await fs.readFile(doc.documentState.authoringSource.path, 'utf-8');
+    } catch {
+      return null;
+    }
   }
 
   private generatePrintableHTML(doc: QiuAiDocument): string {
@@ -434,6 +408,67 @@ function mapTextAlign(value: unknown, AlignmentType: any): any {
   }
 }
 
+function normalizeCssColor(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) {
+    return trimmed.slice(1).toUpperCase();
+  }
+
+  if (/^#[0-9a-f]{3}$/i.test(trimmed)) {
+    return trimmed
+      .slice(1)
+      .split('')
+      .map((char) => `${char}${char}`)
+      .join('')
+      .toUpperCase();
+  }
+
+  const rgbMatch = trimmed.match(/^rgba?\(([^)]+)\)$/i);
+  if (rgbMatch) {
+    const parts = rgbMatch[1]
+      .split(',')
+      .slice(0, 3)
+      .map((item) => Number.parseInt(item.trim(), 10))
+      .filter((item) => Number.isFinite(item));
+    if (parts.length === 3) {
+      return parts
+        .map((item) => Math.max(0, Math.min(255, item)).toString(16).padStart(2, '0'))
+        .join('')
+        .toUpperCase();
+    }
+  }
+
+  return undefined;
+}
+
+function parseFontSizeHalfPoints(value: unknown): number | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)(px|pt)?$/i);
+  if (!match) {
+    return undefined;
+  }
+
+  const size = Number.parseFloat(match[1]);
+  const unit = (match[2] || 'px').toLowerCase();
+  const points = unit === 'pt' ? size : size * 0.75;
+  return Math.max(16, Math.round(points * 2));
+}
+
+function getMark(marks: any[], type: string): any | undefined {
+  return (marks || []).find((mark: any) => mark?.type === type);
+}
+
 function buildInlineRuns(inlines: any[], TextRun: any): any[] {
   return (inlines || []).map((inline: any) => {
     if (inline.type !== 'text') {
@@ -441,14 +476,32 @@ function buildInlineRuns(inlines: any[], TextRun: any): any[] {
     }
 
     const marks = inline.marks || [];
+    const textStyleMark = getMark(marks, 'textStyle');
+    const highlightMark = getMark(marks, 'highlight');
+    const fontFamily = typeof textStyleMark?.attrs?.fontFamily === 'string' ? textStyleMark.attrs.fontFamily.split(',')[0].trim() : 'FangSong';
+    const color = normalizeCssColor(textStyleMark?.attrs?.color);
+    const size = parseFontSizeHalfPoints(textStyleMark?.attrs?.fontSize) || 32;
+    const highlight = normalizeCssColor(highlightMark?.attrs?.color);
+
     return new TextRun({
       text: inline.text || '',
       bold: marks.some((mark: any) => mark.type === 'bold'),
       italics: marks.some((mark: any) => mark.type === 'italic'),
       underline: marks.some((mark: any) => mark.type === 'underline' || mark.type === 'link') ? { type: 'single' } : undefined,
       style: marks.some((mark: any) => mark.type === 'link') ? 'Hyperlink' : undefined,
-      font: 'FangSong',
-      size: 32,
+      strike: marks.some((mark: any) => mark.type === 'strike'),
+      subScript: marks.some((mark: any) => mark.type === 'subscript'),
+      superScript: marks.some((mark: any) => mark.type === 'superscript'),
+      font: fontFamily || 'FangSong',
+      size,
+      color,
+      shading: highlight
+        ? {
+            type: 'clear',
+            fill: highlight,
+            color: 'auto',
+          }
+        : undefined,
     });
   });
 }
@@ -456,6 +509,8 @@ function buildInlineRuns(inlines: any[], TextRun: any): any[] {
 function renderInlineHtml(inline: any): string {
   const marks = inline.marks || [];
   let content = escapeHtml(inline.text || '');
+  const textStyleMark = getMark(marks, 'textStyle');
+  const highlightMark = getMark(marks, 'highlight');
 
   if (marks.some((mark: any) => mark.type === 'bold')) {
     content = `<strong>${content}</strong>`;
@@ -467,6 +522,29 @@ function renderInlineHtml(inline: any): string {
 
   if (marks.some((mark: any) => mark.type === 'underline')) {
     content = `<u>${content}</u>`;
+  }
+
+  if (marks.some((mark: any) => mark.type === 'strike')) {
+    content = `<s>${content}</s>`;
+  }
+
+  if (marks.some((mark: any) => mark.type === 'subscript')) {
+    content = `<sub>${content}</sub>`;
+  }
+
+  if (marks.some((mark: any) => mark.type === 'superscript')) {
+    content = `<sup>${content}</sup>`;
+  }
+
+  const inlineStyles = [
+    typeof textStyleMark?.attrs?.color === 'string' ? `color:${textStyleMark.attrs.color}` : '',
+    typeof textStyleMark?.attrs?.fontSize === 'string' ? `font-size:${textStyleMark.attrs.fontSize}` : '',
+    typeof textStyleMark?.attrs?.fontFamily === 'string' ? `font-family:${textStyleMark.attrs.fontFamily}` : '',
+    typeof highlightMark?.attrs?.color === 'string' ? `background-color:${highlightMark.attrs.color}` : '',
+  ].filter(Boolean);
+
+  if (inlineStyles.length > 0) {
+    content = `<span style="${inlineStyles.join(';')}">${content}</span>`;
   }
 
   const linkMark = marks.find((mark: any) => mark.type === 'link');
