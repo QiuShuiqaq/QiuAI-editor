@@ -8,7 +8,13 @@ import {
 } from '@qiuai/shared';
 
 class ExportService {
-  async exportDOCX(doc: QiuAiDocument, filePath: string): Promise<void> {
+  async exportDOCX(
+    doc: QiuAiDocument,
+    filePath: string,
+    options?: {
+      authoringHtml?: string;
+    }
+  ): Promise<void> {
     try {
       const normalizedDoc = syncDocumentWithState(doc);
 
@@ -18,9 +24,7 @@ class ExportService {
         Document,
         Footer,
         Header,
-        HeadingLevel,
         Packer,
-        PageNumber,
         Paragraph,
         Table,
         TableCell,
@@ -31,21 +35,14 @@ class ExportService {
 
       const pageLayout = normalizedDoc.documentState.pageLayout;
       const isLandscape = pageLayout.orientation === 'landscape';
-      const headerText = normalizedDoc.title || '项目报告';
-      const footerText = '';
+      const headerText = resolvePageSlotText(pageLayout, 'header', 1, '');
+      const footerText = resolvePageSlotText(pageLayout, 'footer', 1, '');
       const children: any[] = [];
       const editorContent = normalizedDoc.editorContent as any;
-      const sourceHtml = await this.tryReadAuthoringHtml(normalizedDoc);
+      const sourceHtml = await this.resolveAuthoringHtml(normalizedDoc, options?.authoringHtml);
 
       if (normalizedDoc.title) {
-        children.push(
-          new Paragraph({
-            text: normalizedDoc.title,
-            heading: HeadingLevel.TITLE,
-            alignment: AlignmentType.CENTER,
-            spacing: { after: 400 },
-          })
-        );
+        children.push(createDocxHeadingParagraph(normalizedDoc.title, docxModule, { title: true }));
       }
 
       if (sourceHtml) {
@@ -77,13 +74,7 @@ class ExportService {
 
       if (children.length <= 1) {
         for (const node of flattenFrameworkNodes(normalizedDoc.framework)) {
-          children.push(
-            new Paragraph({
-              text: node.title,
-              heading: headingLevelFromNumber(node.level, HeadingLevel),
-              spacing: { before: 240, after: 120 },
-            })
-          );
+          children.push(createDocxHeadingParagraph(node.title, docxModule, { level: node.level }));
           children.push(
             new Paragraph({
               text: '正文内容待补充。',
@@ -93,12 +84,54 @@ class ExportService {
         }
       }
 
-      const footerRuns = [
-        ...(footerText ? [new TextRun({ text: `${footerText}  ` })] : []),
-        new TextRun({ text: '第 ' }),
-        new TextRun({ children: [PageNumber.CURRENT] }),
-        new TextRun({ text: ' 页' }),
-      ];
+      if (children.length <= 1) {
+        throw new Error('DOCX 导出失败：文稿内容为空或无法转换为 Word 结构。');
+      }
+
+      const section: any = {
+        properties: {
+          page: {
+            size: isLandscape
+              ? { width: 16838, height: 11906 }
+              : { width: 11906, height: 16838 },
+            margin: {
+              top: mmToTwip(pageLayout.margins.top),
+              bottom: mmToTwip(pageLayout.margins.bottom),
+              left: mmToTwip(pageLayout.margins.left),
+              right: mmToTwip(pageLayout.margins.right),
+              header: mmToTwip(pageLayout.headerOffset),
+              footer: mmToTwip(pageLayout.footerOffset),
+            },
+          },
+        },
+        children,
+      };
+
+      if (headerText) {
+        section.headers = {
+          default: new Header({
+            children: [
+              new Paragraph({
+                text: headerText,
+                alignment: AlignmentType.CENTER,
+              }),
+            ],
+          }),
+        };
+      }
+
+      if (footerText) {
+        section.footers = {
+          default: new Footer({
+            children: [
+              new Paragraph({
+                children: [new TextRun({ text: footerText })],
+                alignment: AlignmentType.CENTER,
+              }),
+            ],
+          }),
+        };
+      }
 
       const docxDoc = new Document({
         styles: {
@@ -111,74 +144,53 @@ class ExportService {
             },
           },
         },
-        sections: [
-          {
-            properties: {
-              page: {
-                size: isLandscape
-                  ? { width: 16838, height: 11906 }
-                  : { width: 11906, height: 16838 },
-                margin: {
-                  top: mmToTwip(pageLayout.margins.top),
-                  bottom: mmToTwip(pageLayout.margins.bottom),
-                  left: mmToTwip(pageLayout.margins.left),
-                  right: mmToTwip(pageLayout.margins.right),
-                  header: mmToTwip(pageLayout.headerOffset),
-                  footer: mmToTwip(pageLayout.footerOffset),
-                },
-              },
-            },
-            headers: {
-              default: new Header({
-                children: [
-                  new Paragraph({
-                    text: headerText,
-                    alignment: AlignmentType.CENTER,
-                  }),
-                ],
-              }),
-            },
-            footers: {
-              default: new Footer({
-                children: [
-                  new Paragraph({
-                    children: footerRuns,
-                    alignment: AlignmentType.CENTER,
-                  }),
-                ],
-              }),
-            },
-            children,
-          },
-        ],
+        sections: [section],
       });
 
       const buffer = await Packer.toBuffer(docxDoc);
       await fs.writeFile(filePath, buffer);
     } catch (error) {
-      console.error('DOCX export error:', error);
-      await this.exportHTML(doc, filePath, 'docx');
+      const message = error instanceof Error ? error.message : 'DOCX 导出失败';
+      throw new Error(message, { cause: error });
     }
   }
 
-  async exportPDF(doc: QiuAiDocument, filePath: string): Promise<void> {
+  async exportPDF(
+    doc: QiuAiDocument,
+    filePath: string,
+    options?: {
+      authoringHtml?: string;
+    }
+  ): Promise<void> {
     try {
-      const normalizedDoc = syncDocumentWithState(doc);
-      const html = this.generatePrintableHTML(doc);
+      const html = this.generatePrintableHTML(doc, options?.authoringHtml);
       await fs.writeFile(filePath.replace(/\.pdf$/i, '.html'), html, 'utf-8');
     } catch (error) {
       console.error('PDF export error:', error);
-      await this.exportHTML(doc, filePath, 'pdf');
+      await this.exportHTML(doc, filePath, 'pdf', options?.authoringHtml);
     }
   }
 
-  generateDebugPrintableHTML(doc: QiuAiDocument): string {
-    return this.generatePrintableHTML(doc);
+  generateDebugPrintableHTML(doc: QiuAiDocument, authoringHtml?: string): string {
+    return this.generatePrintableHTML(doc, authoringHtml);
   }
 
-  private async exportHTML(doc: QiuAiDocument, filePath: string, _format: string): Promise<void> {
-    const html = this.generatePrintableHTML(doc);
+  private async exportHTML(
+    doc: QiuAiDocument,
+    filePath: string,
+    _format: string,
+    authoringHtml?: string
+  ): Promise<void> {
+    const html = this.generatePrintableHTML(doc, authoringHtml);
     await fs.writeFile(filePath.replace(/\.(docx|pdf)$/i, '.html'), html, 'utf-8');
+  }
+
+  private async resolveAuthoringHtml(doc: QiuAiDocument, inlineHtml?: string): Promise<string | null> {
+    if (typeof inlineHtml === 'string' && inlineHtml.trim()) {
+      return inlineHtml;
+    }
+
+    return this.tryReadAuthoringHtml(doc);
   }
 
   private async tryReadAuthoringHtml(doc: QiuAiDocument): Promise<string | null> {
@@ -197,14 +209,14 @@ class ExportService {
     }
   }
 
-  private generatePrintableHTML(doc: QiuAiDocument): string {
+  private generatePrintableHTML(doc: QiuAiDocument, authoringHtml?: string): string {
     const normalizedDoc = syncDocumentWithState(doc);
     const documentMeta = normalizedDoc.documentState.documentMeta;
     const pageLayout = normalizedDoc.documentState.pageLayout;
     const pageSize = pageLayout.orientation === 'landscape' ? 'A4 landscape' : 'A4';
     const pageWidth = pageLayout.orientation === 'landscape' ? 297 : 210;
     const pageHeight = pageLayout.orientation === 'landscape' ? 210 : 297;
-    const headerText = resolvePageSlotText(pageLayout, 'header', 1, normalizedDoc.title);
+    const headerText = resolvePageSlotText(pageLayout, 'header', 1, '');
     const footerText = resolvePageSlotText(pageLayout, 'footer', 1, '');
     const pageBorder =
       pageLayout.pageBorder.mode === 'box'
@@ -231,7 +243,9 @@ class ExportService {
       : '';
     let bodyHTML = '';
 
-    if (hasMeaningfulEditorContent(normalizedDoc.editorContent)) {
+    if (typeof authoringHtml === 'string' && authoringHtml.trim()) {
+      bodyHTML = extractBodyHtml(authoringHtml).trim();
+    } else if (hasMeaningfulEditorContent(normalizedDoc.editorContent)) {
       const content = normalizedDoc.editorContent as any;
       if (Array.isArray(content.content)) {
         bodyHTML = content.content.map((node: any) => proseMirrorNodeToHTML(node)).join('\n');
@@ -506,6 +520,43 @@ function buildInlineRuns(inlines: any[], TextRun: any): any[] {
   });
 }
 
+function createDocxHeadingParagraph(
+  text: string,
+  mod: any,
+  options?: {
+    level?: number;
+    title?: boolean;
+    alignment?: any;
+    spacingBefore?: number;
+    spacingAfter?: number;
+  }
+): any {
+  const { AlignmentType, Paragraph, TextRun } = mod;
+  const isTitle = Boolean(options?.title);
+  const level = Math.min(Math.max(Number(options?.level || 1), 1), 3);
+  const size = isTitle ? 36 : level === 1 ? 44 : level === 2 ? 32 : 28;
+  const alignment =
+    options?.alignment ?? (isTitle || level === 1 ? AlignmentType.CENTER : AlignmentType.LEFT);
+  const spacing = {
+    before: options?.spacingBefore ?? (isTitle ? 0 : level === 1 ? 240 : 160),
+    after: options?.spacingAfter ?? (isTitle ? 400 : level === 1 ? 160 : 120),
+  };
+
+  return new Paragraph({
+    children: [
+      new TextRun({
+        text,
+        bold: true,
+        font: 'SimHei',
+        size,
+        color: '000000',
+      }),
+    ],
+    alignment,
+    spacing,
+  });
+}
+
 function renderInlineHtml(inline: any): string {
   const marks = inline.marks || [];
   let content = escapeHtml(inline.text || '');
@@ -560,7 +611,7 @@ function convertProseMirrorNode(node: any, mod: any): any {
     return null;
   }
 
-  const { AlignmentType, HeadingLevel, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } = mod;
+  const { AlignmentType, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } = mod;
 
   if (node.type === 'tocBlock') {
     const title = String(node.attrs?.title || '目录');
@@ -568,11 +619,11 @@ function convertProseMirrorNode(node: any, mod: any): any {
     const entries = Array.isArray(node.attrs?.entries) ? node.attrs.entries : [];
 
     return [
-      new Paragraph({
-        text: title,
-        heading: HeadingLevel.HEADING_1,
+      createDocxHeadingParagraph(title, mod, {
+        level: 1,
         alignment: AlignmentType.CENTER,
-        spacing: { before: 240, after: 160 },
+        spacingBefore: 240,
+        spacingAfter: 160,
       }),
       ...entries.map((entry: any) => {
         const level = Math.min(Math.max(Number(entry?.level || 1), 1), 3);
@@ -601,12 +652,7 @@ function convertProseMirrorNode(node: any, mod: any): any {
   switch (node.type) {
     case 'heading': {
       const level = node.attrs?.level || 1;
-      return new Paragraph({
-        text: extractNodeText(node),
-        heading: headingLevelFromNumber(level, HeadingLevel),
-        spacing: { before: 240, after: 120 },
-        ...(level === 1 ? { alignment: AlignmentType.CENTER } : {}),
-      });
+      return createDocxHeadingParagraph(extractNodeText(node), mod, { level });
     }
     case 'paragraph': {
       const paragraphClass = getParagraphClass(node);
@@ -636,9 +682,7 @@ function convertProseMirrorNode(node: any, mod: any): any {
       }
 
       const runs = buildInlineRuns(node.content || [], TextRun);
-
-      const hasContent = runs.some((run: any) => run.options?.text);
-      if (!hasContent) {
+      if (!paragraphText.trim() || runs.length === 0) {
         return null;
       }
 
@@ -695,19 +739,6 @@ function extractNodeText(node: any): string {
     return node.content.map(extractNodeText).join('');
   }
   return '';
-}
-
-function headingLevelFromNumber(level: number, HeadingLevel: any): any {
-  switch (level) {
-    case 1:
-      return HeadingLevel.HEADING_1;
-    case 2:
-      return HeadingLevel.HEADING_2;
-    case 3:
-      return HeadingLevel.HEADING_3;
-    default:
-      return HeadingLevel.HEADING_1;
-  }
 }
 
 function proseMirrorNodeToHTML(node: any): string {

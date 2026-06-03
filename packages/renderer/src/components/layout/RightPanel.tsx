@@ -133,6 +133,48 @@ const FONT_OPTIONS = [
   { value: 'Microsoft YaHei, sans-serif', label: '微软雅黑' },
 ];
 
+const EXTENDED_FONT_OPTIONS = [
+  ...FONT_OPTIONS.map((option) => {
+    switch (option.value) {
+      case 'SimSun, serif':
+        return { ...option, label: '宋体' };
+      case 'SimHei, sans-serif':
+        return { ...option, label: '黑体' };
+      case 'FangSong, serif':
+        return { ...option, label: '仿宋' };
+      case 'KaiTi, serif':
+        return { ...option, label: '楷体' };
+      case 'Microsoft YaHei, sans-serif':
+        return { ...option, label: '微软雅黑' };
+      default:
+        return option;
+    }
+  }),
+  { value: 'NSimSun, serif', label: '新宋体' },
+  { value: 'STSong, serif', label: '华文宋体' },
+  { value: 'STFangsong, serif', label: '华文仿宋' },
+  { value: 'STKaiti, serif', label: '华文楷体' },
+  { value: 'STHeiti, sans-serif', label: '华文黑体' },
+  { value: 'Arial, sans-serif', label: 'Arial' },
+  { value: '"Times New Roman", serif', label: 'Times New Roman' },
+  { value: 'Calibri, sans-serif', label: 'Calibri' },
+  { value: 'Cambria, serif', label: 'Cambria' },
+];
+
+function normalizeFontSelectValue(fontFamily?: string): string {
+  if (!fontFamily) {
+    return 'FangSong, serif';
+  }
+
+  const currentPrimary = fontFamily.split(',')[0].trim().replace(/^['"]|['"]$/g, '').toLowerCase();
+  const matched = EXTENDED_FONT_OPTIONS.find((option) => {
+    const optionPrimary = option.value.split(',')[0].trim().replace(/^['"]|['"]$/g, '').toLowerCase();
+    return optionPrimary === currentPrimary;
+  });
+
+  return matched?.value || fontFamily;
+}
+
 const STYLE_OPTIONS = [
   { value: 'Normal', label: '正文', sample: '项目报告正文内容', fontSize: 13, fontWeight: 400, align: 'left' as const },
   { value: 'Heading1', label: '标题 1', sample: '一、项目概述', fontSize: 16, fontWeight: 700, align: 'center' as const },
@@ -399,12 +441,12 @@ export function PropertiesPanel() {
             <Select
               size="small"
               style={{ width: '100%' }}
-              value={(editor?.getAttributes('textStyle').fontFamily as string) || formatting.fontFamily || 'FangSong, serif'}
+              value={normalizeFontSelectValue((editor?.getAttributes('textStyle').fontFamily as string) || formatting.fontFamily)}
               disabled={!canRunFormattingCommands}
               onChange={(value) => {
                 void executeDocumentCommand('set-font-family', { value });
               }}
-              options={FONT_OPTIONS}
+              options={EXTENDED_FONT_OPTIONS}
             />
           </div>
           <div>

@@ -16,7 +16,9 @@ export function registerExportHandlers(ipcMain: IpcMain) {
           return { success: true, data: undefined };
         }
 
-        await exportService.exportDOCX(payload.doc, result.filePath);
+        await exportService.exportDOCX(payload.doc, result.filePath, {
+          authoringHtml: payload.authoringHtml,
+        });
         return { success: true, data: result.filePath };
       } catch (error) {
         const message = error instanceof Error ? error.message : 'DOCX 导出失败';
@@ -38,7 +40,9 @@ export function registerExportHandlers(ipcMain: IpcMain) {
           return { success: true, data: undefined };
         }
 
-        await exportService.exportPDF(payload.doc, result.filePath);
+        await exportService.exportPDF(payload.doc, result.filePath, {
+          authoringHtml: payload.authoringHtml,
+        });
         return { success: true, data: result.filePath };
       } catch (error) {
         const message = error instanceof Error ? error.message : 'PDF 导出失败';

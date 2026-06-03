@@ -143,6 +143,132 @@ function renderBodyHtml(text: string, fallbackTitle: string): string {
     .join('');
 }
 
+function normalizeBodyParagraphs(text: string, fallbackTitle: string): string[] {
+  const normalized = stripRepeatedHeading(text, fallbackTitle);
+  if (!normalized) {
+    return ['待补充。'];
+  }
+
+  const paragraphs = normalized
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  return paragraphs.length > 0 ? paragraphs : ['待补充。'];
+}
+
+function createTextNode(text: string): Record<string, unknown> {
+  return {
+    type: 'text',
+    text,
+  };
+}
+
+function createParagraphNode(text: string): Record<string, unknown> {
+  return {
+    type: 'paragraph',
+    content: [createTextNode(text)],
+  };
+}
+
+function createHeadingNode(text: string, level: number): Record<string, unknown> {
+  return {
+    type: 'heading',
+    attrs: {
+      level,
+    },
+    content: [createTextNode(text)],
+  };
+}
+
+function appendSectionDecorationContent(
+  content: Array<Record<string, unknown>>,
+  node: FrameworkNode,
+  sectionPath: string,
+  counters: { image: number; table: number }
+): void {
+  if (node.needsImage) {
+    counters.image += 1;
+    content.push({
+      type: 'imagePlaceholder',
+      attrs: {
+        figureNumber: `${sectionPath}.${counters.image}`,
+        caption: '图片标题',
+        sectionId: node.id,
+        imageIndex: counters.image,
+        imageData: null,
+      },
+    });
+  }
+
+  if (node.needsTable) {
+    counters.table += 1;
+    content.push({
+      type: 'table',
+      content: [
+        {
+          type: 'tableRow',
+          content: ['列 1', '列 2', '列 3'].map((label) => ({
+            type: 'tableHeader',
+            content: [
+              {
+                type: 'paragraph',
+                content: [createTextNode(label)],
+              },
+            ],
+          })),
+        },
+        ...Array.from({ length: 3 }, () => ({
+          type: 'tableRow',
+          content: Array.from({ length: 3 }, () => ({
+            type: 'tableCell',
+            content: [
+              {
+                type: 'paragraph',
+                content: [createTextNode('')],
+              },
+            ],
+          })),
+        })),
+      ],
+    });
+    content.push(createParagraphNode(`表 ${sectionPath}.${counters.table} 表格标题`));
+  }
+}
+
+function assembleDocumentContentJson(
+  title: string,
+  framework: FrameworkNode[],
+  sections: GeneratedSection[]
+): Record<string, unknown> {
+  const content: Array<Record<string, unknown>> = [];
+  const counters = {
+    image: 0,
+    table: 0,
+  };
+
+  if (title.trim() && title.trim() !== '未命名文稿') {
+    content.push(createHeadingNode(title.trim(), 1));
+  }
+
+  for (const section of sections) {
+    const level = Math.min(Math.max(section.node.level, 1), 3);
+    content.push(createHeadingNode(section.node.title, level));
+
+    for (const paragraph of normalizeBodyParagraphs(section.bodyText, section.node.title)) {
+      content.push(createParagraphNode(paragraph));
+    }
+
+    const sectionPath = getSectionPath(framework, section.node.id) || String(section.node.order);
+    appendSectionDecorationContent(content, section.node, sectionPath, counters);
+  }
+
+  return {
+    type: 'doc',
+    content,
+  };
+}
+
 function splitTextForTyping(text: string): string[] {
   const normalized = stripRepeatedHeading(text, '').replace(/\r/g, '').trim();
   if (!normalized) {
@@ -319,6 +445,22 @@ function buildDocumentPlan(title: string, framework: FrameworkNode[]): string {
   return `${basePlan}\n\n【内置论文写作规范】\n${PAPER_AUTHORING_PROFILE}`;
 }
 
+function buildMergedDocumentPlan(title: string, framework: FrameworkNode[], existingPlan = ''): string {
+  const basePlan = generateDocumentPlan(framework, title);
+  const normalizedExistingPlan = existingPlan.trim();
+  const builtInProfile = `【内置论文写作规范】\n${PAPER_AUTHORING_PROFILE}`;
+
+  if (!normalizedExistingPlan) {
+    return `${basePlan}\n\n${builtInProfile}`;
+  }
+
+  if (normalizedExistingPlan.includes('【内置论文写作规范】')) {
+    return normalizedExistingPlan;
+  }
+
+  return `${basePlan}\n\n【用户补充写作要求】\n${normalizedExistingPlan}\n\n${builtInProfile}`;
+}
+
 function getSectionPath(nodes: FrameworkNode[], targetId: string, parentPath = ''): string {
   for (const node of nodes) {
     const nextPath = parentPath ? `${parentPath}.${node.order}` : String(node.order);
@@ -428,7 +570,7 @@ function emitFullPaperProgress(progress: FullPaperGenerationProgress): void {
   );
 }
 
-async function replaceDocumentContent(content: string): Promise<boolean> {
+async function replaceDocumentContent(content: string | Record<string, unknown>): Promise<boolean> {
   const adapter = useDocumentEngineStore.getState().adapter;
   if (adapter && supportsDocumentCommands(adapter) && adapter.executeCommand) {
     return adapter.executeCommand('replace-document-content', { content });
@@ -439,7 +581,10 @@ async function replaceDocumentContent(content: string): Promise<boolean> {
     return false;
   }
 
-  editor.commands.setContent(content);
+  editor.commands.setContent(content as Parameters<typeof editor.commands.setContent>[0]);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('qiuai:editor-content-replaced'));
+  }
   return true;
 }
 
@@ -606,7 +751,11 @@ export async function generateAndApplyFullPaperFromOutline(
   const nextMemories = [...(currentDoc.documentState.paperSpineMemories || [])];
   const allChunks = referenceMaterials.flatMap((material) => chunkReferenceMaterial(material));
   const generatedSections: GeneratedSection[] = [];
-  const documentPlan = buildDocumentPlan(currentDoc.title, framework);
+  const documentPlan = buildMergedDocumentPlan(
+    currentDoc.title,
+    framework,
+    currentDoc.documentPlan || currentDoc.documentState.documentPlan || ''
+  );
   const finalizedSectionsHtml: string[] = [];
   const decorationCounters = {
     image: 0,
@@ -708,11 +857,17 @@ export async function generateAndApplyFullPaperFromOutline(
   }
 
   const html = assemblePreviewDocumentHtml(currentDoc.title, finalizedSectionsHtml.join(''));
+  const finalDocumentContent = assembleDocumentContentJson(currentDoc.title, framework, generatedSections);
   notifyProgress(createProgressPayload('applying', generatedSections.length, totalSections));
 
-  const applied = await replaceDocumentContent(html);
+  const applied = await replaceDocumentContent(finalDocumentContent);
   if (!applied) {
     throw new Error('生成完成，但未能写入当前编辑器。');
+  }
+
+  await sleep(30);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('resize'));
   }
 
   const editor = useEditorStore.getState().editor;
@@ -725,16 +880,19 @@ export async function generateAndApplyFullPaperFromOutline(
   }));
   const aiAuthorshipRecords = generatedSections.map((section) => createAuthorshipRecord(section, createdAt));
 
+  const persistedEditorContent =
+    editor?.getJSON() && Object.keys(editor.getJSON()).length > 0 ? editor.getJSON() : finalDocumentContent;
+
   const nextDoc = syncDocumentWithState({
     ...currentDoc,
     currentPhase: WritingPhase.TEXT_GEN,
     updatedAt: createdAt,
     referenceMaterials,
-    editorContent: editor?.getJSON() || currentDoc.editorContent,
+    editorContent: persistedEditorContent,
     documentPlan,
     documentState: {
       ...currentDoc.documentState,
-      editorContent: editor?.getJSON() || currentDoc.editorContent,
+      editorContent: persistedEditorContent,
       referenceMaterials,
       documentPlan,
       sectionSummaries,

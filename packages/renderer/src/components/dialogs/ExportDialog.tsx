@@ -45,13 +45,15 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
       const pageCount = useEditorStore.getState().pageCount;
       const latestDoc = useProjectStore.getState().doc;
       const normalizedFileName = fileName.trim() || latestDoc.title || '项目报告';
+      const authoringHtml = currentEditor?.getHTML() || undefined;
+      const editorContent = currentEditor?.getJSON() || latestDoc.editorContent;
       const exportDoc = syncDocumentWithState({
         ...latestDoc,
         title: normalizedFileName,
-        editorContent: currentEditor?.getJSON() || latestDoc.editorContent,
+        editorContent,
         documentState: {
           ...latestDoc.documentState,
-          editorContent: currentEditor?.getJSON() || latestDoc.editorContent,
+          editorContent,
           pageCount,
         },
         updatedAt: new Date().toISOString(),
@@ -61,6 +63,7 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
       const payload: ExportRequest = {
         doc: exportDoc,
         suggestedFileName: `${normalizedFileName}.${format}`,
+        authoringHtml,
       };
       const result = await ipcClient.invoke<IPCResponse<string>>(channel, payload);
 
@@ -115,7 +118,7 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
                     <div>
                       <strong>Word 文档 (.docx)</strong>
                     </div>
-                    <div style={{ fontSize: 11, color: '#666' }}>适合继续编辑，优先保留当前文档结构。</div>
+                    <div style={{ fontSize: 11, color: '#666' }}>适合继续编辑，优先保留当前正文内容。</div>
                   </div>
                 </Space>
               </Radio>

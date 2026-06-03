@@ -23,6 +23,11 @@ export interface ParagraphAttrs {
   textAlign?: string | null;
   class?: string | null;
   styleName?: string | null;
+  borderTop?: string | null;
+  borderBottom?: string | null;
+  borderLeft?: string | null;
+  borderRight?: string | null;
+  bgColor?: string | null;
 }
 
 function buildStyle(attrs: ParagraphAttrs): string {
@@ -34,6 +39,11 @@ function buildStyle(attrs: ParagraphAttrs): string {
   if (attrs.spaceBefore) parts.push(`margin-top:${attrs.spaceBefore}`);
   if (attrs.spaceAfter) parts.push(`margin-bottom:${attrs.spaceAfter}`);
   if (attrs.textAlign) parts.push(`text-align:${attrs.textAlign}`);
+  if (attrs.borderTop) parts.push(`border-top:${attrs.borderTop}`);
+  if (attrs.borderBottom) parts.push(`border-bottom:${attrs.borderBottom}`);
+  if (attrs.borderLeft) parts.push(`border-left:${attrs.borderLeft}`);
+  if (attrs.borderRight) parts.push(`border-right:${attrs.borderRight}`);
+  if (attrs.bgColor) parts.push(`background-color:${attrs.bgColor}`);
   return parts.join(';');
 }
 
@@ -58,6 +68,11 @@ export const CustomParagraph = Node.create<CustomParagraphOptions>({
       textAlign: { default: null },
       class: { default: 'body-text' },
       styleName: { default: 'Normal' },
+      borderTop: { default: null },
+      borderBottom: { default: null },
+      borderLeft: { default: null },
+      borderRight: { default: null },
+      bgColor: { default: null },
     };
   },
 

@@ -134,6 +134,17 @@ function waitForServer(url, timeoutMs = 60000) {
   });
 }
 
+async function resolveDevServerUrl(vite, timeoutMs = 15000) {
+  const byOutput = waitForDevServerFromOutput(vite, timeoutMs);
+  const byDefaultPort = waitForServer(DEFAULT_DEV_SERVER_URL, timeoutMs).then(() => DEFAULT_DEV_SERVER_URL);
+
+  try {
+    return await Promise.any([byOutput, byDefaultPort]);
+  } catch {
+    return DEFAULT_DEV_SERVER_URL;
+  }
+}
+
 async function main() {
   const children = [];
   let shuttingDown = false;
@@ -175,7 +186,7 @@ async function main() {
     }
   });
 
-  const devServerUrl = await waitForDevServerFromOutput(vite).catch(() => DEFAULT_DEV_SERVER_URL);
+  const devServerUrl = await resolveDevServerUrl(vite);
 
   await Promise.all([
     waitForServer(devServerUrl),

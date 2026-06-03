@@ -1,6 +1,6 @@
 {
   "name": "qiuai-editor",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "秋AI编辑器 - 科研项目申报书AI辅助写作桌面应用",
   "scripts": {

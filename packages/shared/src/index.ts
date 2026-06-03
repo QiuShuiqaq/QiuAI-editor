@@ -585,6 +585,7 @@ export interface QiuAiDocument {
 export interface ExportRequest {
   doc: QiuAiDocument;
   suggestedFileName?: string;
+  authoringHtml?: string;
 }
 
 export interface DocumentEngineSelectionSnapshot {

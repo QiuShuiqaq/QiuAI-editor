@@ -20,7 +20,7 @@ import {
   getCurrentSelectedText,
   insertDocumentHtml,
   insertDocumentText,
-  replaceCurrentSelection,
+  replaceSelectionWithAgentTracking,
 } from '../../services/documentEngineCommands';
 import { generateAndApplyFullPaperFromOutline } from '../../services/fullPaperGeneration';
 import { useEditorStore } from '../../stores/useEditorStore';
@@ -60,7 +60,10 @@ export function TextPolishPanel() {
 
   const [polishStyle, setPolishStyle] = useState<string>('formal');
   const [polishing, setPolishing] = useState(false);
-  const [polishResult, setPolishResult] = useState('');
+  const [polishStatus, setPolishStatus] = useState<{
+    type: 'info' | 'success' | 'error';
+    text: string;
+  } | null>(null);
   const [materials, setMaterials] = useState<ReferenceMaterial[]>([]);
   const [sections, setSections] = useState<SectionProgress[]>(buildProgressFromFramework(frameworkNodes));
   const [isGenerating, setIsGenerating] = useState(false);
@@ -94,40 +97,77 @@ export function TextPolishPanel() {
   );
 
   const handlePolish = async () => {
-    const text = (await getCurrentSelectedText()).trim();
-    if (!text) {
+    const selectedTextSnapshot = await getCurrentSelectedText();
+    if (!selectedTextSnapshot.trim()) {
       message.warning('请先在编辑区选中需要润色的文本');
       return;
     }
 
     setPolishing(true);
+    setPolishStatus({ type: 'info', text: '正在调用 AI 处理选中文本，请稍候...' });
+    message.open({
+      key: 'text-polish',
+      type: 'loading',
+      content: '正在调用 AI 处理选中文本...',
+      duration: 0,
+    });
     try {
+      const writingConfig = getWritingConfig();
       const result = await aiPolish({
-        originalText: text,
+        originalText: selectedTextSnapshot,
         style: polishStyle as PolishRequest['style'],
-        aiConfig: getWritingConfig(),
+        aiConfig: writingConfig,
       });
-      setPolishResult(result);
+
+      const applyResult = await replaceSelectionWithAgentTracking({
+        text: result,
+        expectedSelectionText: selectedTextSnapshot,
+        provider: writingConfig.provider,
+        model: writingConfig.model,
+        reason: `sidebar-${polishStyle}`,
+      });
+
+      if (applyResult.selectionChanged) {
+        const warning = '当前选区在 AI 处理过程中发生了变化，为避免替换错位置，请重新选中文本后再试。';
+        setPolishStatus({ type: 'error', text: warning });
+        message.open({
+          key: 'text-polish',
+          type: 'warning',
+          content: warning,
+        });
+        return;
+      }
+
+      if (!applyResult.applied) {
+        throw new Error('AI 已返回结果，但未能写入当前选区');
+      }
+
+      setPolishStatus({
+        type: 'success',
+        text: applyResult.saveError
+          ? '润色结果已直接替换当前选区，但自动保存失败，请手动保存一次。'
+          : '润色结果已直接替换当前选区。',
+      });
+      message.open({
+        key: 'text-polish',
+        type: applyResult.saveError ? 'warning' : 'success',
+        content: applyResult.saveError ? '润色结果已应用，但自动保存失败' : '润色结果已应用到当前选区',
+      });
+      if (applyResult.saveError) {
+        message.warning(applyResult.saveError);
+      }
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '润色请求失败');
+      const errorMessage = error instanceof Error ? error.message : '润色请求失败';
+      setPolishStatus({ type: 'error', text: errorMessage });
+      message.open({
+        key: 'text-polish',
+        type: 'error',
+        content: errorMessage,
+      });
+      message.error(errorMessage);
     } finally {
       setPolishing(false);
     }
-  };
-
-  const handleApplyPolish = async () => {
-    if (!polishResult) {
-      return;
-    }
-
-    const applied = await replaceCurrentSelection(polishResult);
-    if (!applied) {
-      message.error('当前文档无法应用润色结果');
-      return;
-    }
-
-    setPolishResult('');
-    message.success('润色结果已应用到正文');
   };
 
   const generateOneSection = async (node: FrameworkNode) => {
@@ -396,35 +436,37 @@ export function TextPolishPanel() {
         开始润色
       </Button>
 
-      {polishResult ? (
-        <>
-          <div style={{ marginTop: 8, marginBottom: 8 }}>
-            <label style={{ fontSize: 12, fontWeight: 500 }}>润色结果</label>
-            <div
-              style={{
-                background: '#f6ffed',
-                border: '1px solid #b7eb8f',
-                borderRadius: 4,
-                padding: 8,
-                fontSize: 12,
-                maxHeight: 200,
-                overflow: 'auto',
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {polishResult}
-            </div>
-          </div>
-          <Space>
-            <Button size="small" onClick={() => void handleApplyPolish()} type="primary">
-              应用到编辑区
-            </Button>
-            <Button size="small" onClick={() => setPolishResult('')}>
-              放弃
-            </Button>
-          </Space>
-        </>
+      {polishStatus ? (
+        <div
+          style={{
+            marginBottom: 8,
+            padding: '8px 10px',
+            borderRadius: 6,
+            border:
+              polishStatus.type === 'error'
+                ? '1px solid #ffccc7'
+                : polishStatus.type === 'success'
+                  ? '1px solid #b7eb8f'
+                  : '1px solid #91caff',
+            background:
+              polishStatus.type === 'error'
+                ? '#fff2f0'
+                : polishStatus.type === 'success'
+                  ? '#f6ffed'
+                  : '#f0f8ff',
+            fontSize: 12,
+            color:
+              polishStatus.type === 'error'
+                ? '#a8071a'
+                : polishStatus.type === 'success'
+                  ? '#237804'
+                  : '#0958d9',
+          }}
+        >
+          {polishStatus.text}
+        </div>
       ) : null}
+
     </>
   );
 

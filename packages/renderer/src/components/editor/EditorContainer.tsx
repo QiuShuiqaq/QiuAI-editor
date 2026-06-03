@@ -56,6 +56,7 @@ import { TocBlock } from './extensions/TocBlock';
 import { createDocumentAnchorId } from './documentReferenceUtils';
 import { WordLists } from './extensions/WordLists';
 import { WordStyles } from './extensions/WordStyles';
+import { TextStyleFormatting } from './extensions/TextStyleFormatting';
 
 const MM_TO_PX = 96 / 25.4;
 
@@ -347,6 +348,7 @@ export function EditorContainer({ zoom = 1 }: EditorContainerProps) {
       Underline,
       Strike,
       TextStyle,
+      TextStyleFormatting,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Placeholder.configure({ placeholder: '开始撰写您的项目报告...' }),
       WordLists,
@@ -580,6 +582,27 @@ export function EditorContainer({ zoom = 1 }: EditorContainerProps) {
     });
   }, [applyPagedFlowLayout, setPageCount]);
 
+  const resetPaginationLayout = useCallback(() => {
+    if (!editor || typeof window === 'undefined') {
+      return;
+    }
+
+    lastLayoutSignatureRef.current = '';
+    appliedBreaksRef.current = [];
+    paginationInFlightRef.current = false;
+
+    setPageFlowBreaks(editor, []);
+    setLayoutResult({
+      pageCount: 1,
+      breaks: [],
+      contentHeightMm: fullPageHeightMm,
+    });
+
+    window.requestAnimationFrame(() => {
+      updatePageCountFromLayout();
+    });
+  }, [editor, fullPageHeightMm, updatePageCountFromLayout]);
+
   const updateCurrentPageFromSelection = useCallback(
     (instance: NonNullable<typeof editor>) => {
       const contentRoot = contentHostRef.current?.querySelector('.ProseMirror');
@@ -750,6 +773,21 @@ export function EditorContainer({ zoom = 1 }: EditorContainerProps) {
       }
     };
   }, [editor, updateCurrentPageFromSelection, updatePageCountFromLayout]);
+
+  useEffect(() => {
+    if (!editor || typeof window === 'undefined') {
+      return;
+    }
+
+    const handleEditorContentReplaced = () => {
+      resetPaginationLayout();
+    };
+
+    window.addEventListener('qiuai:editor-content-replaced', handleEditorContentReplaced);
+    return () => {
+      window.removeEventListener('qiuai:editor-content-replaced', handleEditorContentReplaced);
+    };
+  }, [editor, resetPaginationLayout]);
 
   const populateFromFramework = useCallback(() => {
     if (!editor || frameworkNodes.length === 0 || hasLoadedContent(currentDocContent)) return;

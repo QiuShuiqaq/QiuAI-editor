@@ -17,7 +17,7 @@ export function AppShell() {
   const [outlineVisible, setOutlineVisible] = useState(true);
   const [readingMode, setReadingMode] = useState(false);
   const [taskPaneOpen, setTaskPaneOpen] = useState(true);
-  const [activeTaskPaneTab, setActiveTaskPaneTab] = useState<TaskPaneTab>('properties');
+  const [activeTaskPaneTab, setActiveTaskPaneTab] = useState<TaskPaneTab>('assistant');
   const frameworkNodes = useFrameworkStore((state) => state.nodes);
   const setFrameworkNodes = useFrameworkStore((state) => state.setNodes);
   const doc = useProjectStore((state) => state.doc);
@@ -46,7 +46,7 @@ export function AppShell() {
   useEffect(() => {
     (window as any).__toggleOutline = () => setOutlineVisible((value: boolean) => !value);
     (window as any).__toggleReadingMode = () => setReadingMode((value: boolean) => !value);
-    (window as any).__openTaskPane = (tab: TaskPaneTab = 'properties') => {
+    (window as any).__openTaskPane = (tab: TaskPaneTab = 'assistant') => {
       setActiveTaskPaneTab(tab);
       setTaskPaneOpen(true);
     };

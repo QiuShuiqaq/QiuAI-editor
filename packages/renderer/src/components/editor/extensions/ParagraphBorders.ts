@@ -64,9 +64,8 @@ export const ParagraphBorders = Extension.create({
           const chainResult = chain();
           for (const [key, value] of Object.entries(style)) {
             if (value) {
-              // Store as data attribute via the node
               chainResult.updateAttributes('paragraph', {
-                [`borderData_${key}`]: value,
+                [key]: value,
               } as Record<string, unknown>);
             }
           }
@@ -88,10 +87,11 @@ export const ParagraphBorders = Extension.create({
         ({ chain }) => {
           return chain()
             .updateAttributes('paragraph', {
-              borderTop: null, borderBottom: null, borderLeft: null, borderRight: null,
-              borderData_borderTop: null, borderData_borderBottom: null,
-              borderData_borderLeft: null, borderData_borderRight: null,
-              bgColor: 'transparent',
+              borderTop: null,
+              borderBottom: null,
+              borderLeft: null,
+              borderRight: null,
+              bgColor: null,
             } as Record<string, unknown>)
             .run();
         },

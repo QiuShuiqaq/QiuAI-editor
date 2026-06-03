@@ -21,6 +21,7 @@ import { PropertiesPanel, WritingStrategyPanel } from './RightPanel';
 export type TaskPaneTab = 'properties' | 'strategy' | 'assistant' | 'review' | 'references';
 
 const TAB_LABELS: Record<TaskPaneTab, string> = DISPLAY_TASK_PANE_LABELS;
+const TASK_PANE_TAB_ORDER: TaskPaneTab[] = ['assistant', 'properties', 'strategy', 'review', 'references'];
 
 const REVIEW_SEVERITY_OPTIONS: Array<{ value: ReviewIssue['severity']; label: string }> = [
   { value: 'warning', label: '提醒' },
@@ -457,7 +458,7 @@ export function TaskPane({
           overflowX: 'auto',
         }}
       >
-        {(Object.keys(TAB_LABELS) as TaskPaneTab[]).map((tab) => {
+        {TASK_PANE_TAB_ORDER.map((tab) => {
           const active = tab === activeTab;
 
           return (

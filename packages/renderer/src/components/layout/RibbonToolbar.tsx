@@ -200,6 +200,16 @@ function normalizeHomeStyle(styleLabel: string): HomeStyle {
   return 'Normal';
 }
 
+function normalizeFontFamilySelectValue(fontFamily: string): string {
+  const currentPrimary = fontFamily.split(',')[0].trim().replace(/^['"]|['"]$/g, '').toLowerCase();
+  const matched = FONT_FAMILIES.find((option) => {
+    const optionPrimary = option.value.split(',')[0].trim().replace(/^['"]|['"]$/g, '').toLowerCase();
+    return optionPrimary === currentPrimary;
+  });
+
+  return matched?.value || fontFamily;
+}
+
 function focusEditorCommand(callback: () => boolean): boolean {
   try {
     return callback();
@@ -625,7 +635,7 @@ export function RibbonToolbar() {
       <RibbonGroup title="字体" minWidth={360}>
         <Select
           size="small"
-          value={effectiveFormatting.fontFamily}
+          value={normalizeFontFamilySelectValue(effectiveFormatting.fontFamily)}
           style={{ width: 140 }}
           options={FONT_FAMILIES}
           onChange={(value) => void runCommand('set-font-family', { value })}

@@ -45,9 +45,25 @@ class PolishService {
       for await (const chunk of provider.generateText(prompt, config)) {
         result += chunk;
       }
-      return result || request.originalText;
-    } catch {
-      return `[润色失败] ${request.originalText}`;
+      const normalized = result.trim();
+
+      if (!normalized) {
+        throw new Error('AI 未返回有效内容，请稍后重试。');
+      }
+
+      if (/^\[(错误|API错误)/.test(normalized)) {
+        throw new Error(normalized);
+      }
+
+      return result;
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error;
+      }
+
+      throw new Error('润色失败，请检查模型配置或网络连接。', {
+        cause: error,
+      });
     }
   }
 }

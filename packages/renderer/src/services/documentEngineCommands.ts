@@ -6,6 +6,9 @@ import {
   parseOutlineText,
   syncDocumentWithState,
   type AIChatAction,
+  type AiAcceptedMode,
+  type AiAuthorshipActionType,
+  type AiAuthorshipRecord,
   type CitationStyleProfile,
   type DraftMeta,
   type ExportRequest,
@@ -46,6 +49,18 @@ function getCurrentDocSnapshot(): QiuAiDocument {
   return useProjectStore.getState().doc;
 }
 
+interface AgentActionTrackingMeta {
+  provider: string;
+  model: string;
+  acceptedMode?: AiAcceptedMode;
+  promptDigest?: string;
+}
+
+interface EditorRangeSnapshot {
+  from: number;
+  to: number;
+}
+
 function updateCurrentDoc(mutator: (doc: QiuAiDocument) => QiuAiDocument): boolean {
   const currentDoc = getCurrentDocSnapshot();
   const nextDoc = syncDocumentWithState({
@@ -56,6 +71,109 @@ function updateCurrentDoc(mutator: (doc: QiuAiDocument) => QiuAiDocument): boole
   useFrameworkStore.getState().setNodes(nextDoc.framework || []);
   useEditorStore.getState().setDirty(true);
   return true;
+}
+
+function syncCurrentDocumentWithEditorSnapshot(): boolean {
+  const currentDoc = getCurrentDocSnapshot();
+  const editor = useEditorStore.getState().editor;
+  const pageCount = useEditorStore.getState().pageCount;
+  const editorContent = editor?.getJSON() || currentDoc.editorContent;
+
+  const nextDoc = syncDocumentWithState({
+    ...currentDoc,
+    editorContent,
+    updatedAt: new Date().toISOString(),
+    documentState: {
+      ...currentDoc.documentState,
+      editorContent,
+      pageCount,
+    },
+  });
+
+  useProjectStore.getState().setDoc(nextDoc);
+  useFrameworkStore.getState().setNodes(nextDoc.framework || []);
+  useEditorStore.getState().setDirty(true);
+  return true;
+}
+
+function getCurrentEditorRange(): EditorRangeSnapshot | null {
+  const editor = useEditorStore.getState().editor;
+  if (!editor) {
+    return null;
+  }
+
+  const { from, to } = editor.state.selection;
+  return { from, to };
+}
+
+function mapActionToAuthorshipType(action: AIChatAction): AiAuthorshipActionType | null {
+  switch (action.type) {
+    case 'replace-selection':
+    case 'replace-document':
+      return 'rewrite';
+    case 'append-after-selection':
+    case 'insert-text':
+      return 'expand';
+    case 'execute-command':
+    default:
+      return null;
+  }
+}
+
+function estimateRecordRange(
+  action: AIChatAction,
+  snapshot: EditorRangeSnapshot | null
+): EditorRangeSnapshot | null {
+  if (!snapshot) {
+    return null;
+  }
+
+  switch (action.type) {
+    case 'replace-selection':
+      return {
+        from: snapshot.from,
+        to: snapshot.from + action.text.length,
+      };
+    case 'append-after-selection':
+      return {
+        from: snapshot.to,
+        to: snapshot.to + action.text.length,
+      };
+    case 'insert-text':
+      return {
+        from: snapshot.from,
+        to: snapshot.from + action.text.length,
+      };
+    case 'replace-document':
+      return {
+        from: 0,
+        to: action.text.length,
+      };
+    case 'execute-command':
+    default:
+      return null;
+  }
+}
+
+function appendAiAuthorshipRecord(
+  record: Omit<AiAuthorshipRecord, 'id' | 'createdAt'>
+): boolean {
+  const createdAt = new Date().toISOString();
+
+  return updateCurrentDoc((doc) => ({
+    ...doc,
+    documentState: {
+      ...doc.documentState,
+      aiAuthorshipRecords: [
+        ...doc.documentState.aiAuthorshipRecords,
+        {
+          id: generateId(),
+          createdAt,
+          ...record,
+        },
+      ],
+    },
+  }));
 }
 
 function resolveWritingPhase(value: unknown): WritingPhase | null {
@@ -169,6 +287,7 @@ async function exportCurrentDocument(format: 'docx' | 'pdf', suggestedFileName?:
   const currentEditor = useEditorStore.getState().editor;
   const pageCount = useEditorStore.getState().pageCount;
   const latestDoc = getCurrentDocSnapshot();
+  const authoringHtml = currentEditor?.getHTML() || undefined;
   const normalizedFileName = normalizeText(suggestedFileName || latestDoc.title || '项目报告') || '项目报告';
   const exportDoc = syncDocumentWithState({
     ...latestDoc,
@@ -186,6 +305,7 @@ async function exportCurrentDocument(format: 'docx' | 'pdf', suggestedFileName?:
   const payload: ExportRequest = {
     doc: exportDoc,
     suggestedFileName: `${normalizedFileName}.${format}`,
+    authoringHtml,
   };
   const result = await ipcClient.invoke<IPCResponse<string>>(channel, payload);
   return Boolean(result.success);
@@ -590,7 +710,7 @@ export async function executeDocumentCommand(
         })
         .run();
     case 'clear-formatting':
-      editor.chain().focus().unsetAllMarks().run();
+      editor.chain().focus().clearNodes().unsetAllMarks().run();
       return editor
         .chain()
         .focus()
@@ -982,6 +1102,9 @@ export async function replaceDocumentContent(
   }
 
   editor.commands.setContent(content as Parameters<typeof editor.commands.setContent>[0]);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('qiuai:editor-content-replaced'));
+  }
   return true;
 }
 
@@ -1059,12 +1182,130 @@ export async function executeAgentAction(action: AIChatAction): Promise<boolean>
   }
 }
 
-export async function executeAgentActions(actions: AIChatAction[]): Promise<{
+export async function executeAgentActionsWithTracking(
+  actions: AIChatAction[],
+  meta: AgentActionTrackingMeta
+): Promise<{
   appliedCount: number;
   failedCount: number;
+  recordedCount: number;
+  savedToDraft: boolean;
+  saveError?: string;
 }> {
   let appliedCount = 0;
   let failedCount = 0;
+  let recordedCount = 0;
+  let savedToDraft = false;
+  let saveError: string | undefined;
+
+  for (const action of actions) {
+    const authorshipType = mapActionToAuthorshipType(action);
+    const beforeRange = getCurrentEditorRange();
+    const applied = await executeAgentAction(action);
+
+    if (applied) {
+      appliedCount += 1;
+
+      if (authorshipType) {
+        const recordRange = estimateRecordRange(action, beforeRange);
+        if (recordRange) {
+          const recorded = appendAiAuthorshipRecord({
+            from: recordRange.from,
+            to: recordRange.to,
+            actionType: authorshipType,
+            provider: meta.provider,
+            model: meta.model,
+            promptDigest: meta.promptDigest,
+            acceptedMode: meta.acceptedMode ?? 'applied-directly',
+          });
+
+          if (recorded) {
+            recordedCount += 1;
+          }
+        }
+      }
+    } else {
+      failedCount += 1;
+    }
+  }
+
+  if (appliedCount > 0) {
+    syncCurrentDocumentWithEditorSnapshot();
+
+    try {
+      await saveCurrentDocument();
+      savedToDraft = true;
+    } catch (error) {
+      saveError = error instanceof Error ? error.message : 'AI 修改已写入编辑区，但自动保存失败';
+    }
+  }
+
+  return { appliedCount, failedCount, recordedCount, savedToDraft, saveError };
+}
+
+function matchesSelectionSnapshot(currentSelection: string, expectedSelection: string): boolean {
+  if (currentSelection === expectedSelection) {
+    return true;
+  }
+
+  return normalizeText(currentSelection) === normalizeText(expectedSelection);
+}
+
+export async function replaceSelectionWithAgentTracking(payload: {
+  text: string;
+  expectedSelectionText: string;
+  provider: string;
+  model: string;
+  reason?: string;
+  acceptedMode?: AiAcceptedMode;
+  promptDigest?: string;
+}): Promise<{
+  applied: boolean;
+  selectionChanged: boolean;
+  saveError?: string;
+}> {
+  const currentSelection = await getCurrentSelectedText();
+
+  if (!matchesSelectionSnapshot(currentSelection, payload.expectedSelectionText)) {
+    return {
+      applied: false,
+      selectionChanged: true,
+    };
+  }
+
+  const result = await executeAgentActionsWithTracking(
+    [
+      {
+        type: 'replace-selection',
+        text: payload.text,
+        reason: payload.reason,
+      },
+    ],
+    {
+      provider: payload.provider,
+      model: payload.model,
+      acceptedMode: payload.acceptedMode,
+      promptDigest: payload.promptDigest,
+    }
+  );
+
+  return {
+    applied: result.appliedCount > 0,
+    selectionChanged: false,
+    saveError: result.saveError,
+  };
+}
+
+export async function executeAgentActions(actions: AIChatAction[]): Promise<{
+  appliedCount: number;
+  failedCount: number;
+  savedToDraft: boolean;
+  saveError?: string;
+}> {
+  let appliedCount = 0;
+  let failedCount = 0;
+  let savedToDraft = false;
+  let saveError: string | undefined;
 
   for (const action of actions) {
     const applied = await executeAgentAction(action);
@@ -1075,5 +1316,16 @@ export async function executeAgentActions(actions: AIChatAction[]): Promise<{
     }
   }
 
-  return { appliedCount, failedCount };
+  if (appliedCount > 0) {
+    syncCurrentDocumentWithEditorSnapshot();
+
+    try {
+      await saveCurrentDocument();
+      savedToDraft = true;
+    } catch (error) {
+      saveError = error instanceof Error ? error.message : '修改已写入编辑区，但自动保存失败';
+    }
+  }
+
+  return { appliedCount, failedCount, savedToDraft, saveError };
 }

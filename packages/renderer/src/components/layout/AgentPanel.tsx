@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input, Progress, Tag, message } from 'antd';
+import { Alert, Button, Input, InputNumber, Progress, Tag, message } from 'antd';
 import {
   CompressOutlined,
   ExpandOutlined,
@@ -8,13 +8,14 @@ import {
   ThunderboltOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import type { PolishRequest } from '@qiuai/shared';
+import type { AIChatAction, PolishRequest } from '@qiuai/shared';
+import { parseOutlineText, syncDocumentWithState } from '@qiuai/shared';
 import { chatWithAssistant, polishText as aiPolish } from '../../services/aiClient';
 import {
   executeDocumentCommand,
-  executeAgentActions,
+  executeAgentActionsWithTracking,
   getCurrentDocumentText,
-  replaceCurrentSelection,
+  replaceSelectionWithAgentTracking,
 } from '../../services/documentEngineCommands';
 import {
   FULL_PAPER_PROGRESS_EVENT,
@@ -22,6 +23,7 @@ import {
 } from '../../services/fullPaperGeneration';
 import { useDocumentEngineStore } from '../../stores/useDocumentEngineStore';
 import { useEditorStore } from '../../stores/useEditorStore';
+import { useFrameworkStore } from '../../stores/useFrameworkStore';
 import { useProjectStore } from '../../stores/useProjectStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 
@@ -30,6 +32,36 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+}
+
+interface PendingAgentPlan {
+  actions: AIChatAction[];
+  selectionTextSnapshot: string;
+  documentTextSnapshot: string;
+  provider: string;
+  model: string;
+  previewItems: PendingPlanPreviewItem[];
+}
+
+interface PendingPlanPreviewItem {
+  id: string;
+  title: string;
+  beforeText?: string;
+  afterText?: string;
+  detail?: string;
+}
+
+interface TextPreviewState {
+  originalText: string;
+  resultText: string;
+  actionType: 'polish' | 'concise' | 'expand';
+  provider: string;
+  model: string;
+}
+
+interface AgentStatusState {
+  type: 'info' | 'success' | 'error';
+  text: string;
 }
 
 function createMessage(role: ChatMessage['role'], content: string): ChatMessage {
@@ -41,27 +73,132 @@ function createMessage(role: ChatMessage['role'], content: string): ChatMessage 
   };
 }
 
+function isSelectionBoundAction(action: AIChatAction): boolean {
+  return action.type === 'replace-selection' || action.type === 'append-after-selection';
+}
+
+function truncatePreviewText(text: string, maxLength = 240): string {
+  const normalized = text.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength)}...`;
+}
+
+function buildPendingPlanPreviewItems(
+  actions: AIChatAction[],
+  selectionTextSnapshot: string,
+  documentTextSnapshot: string
+): PendingPlanPreviewItem[] {
+  return actions.map((action, index) => {
+    switch (action.type) {
+      case 'replace-selection':
+        return {
+          id: `${action.type}-${index}`,
+          title: `修改 ${index + 1}: 替换当前选区`,
+          beforeText: truncatePreviewText(selectionTextSnapshot),
+          afterText: truncatePreviewText(action.text),
+          detail: action.reason,
+        };
+      case 'append-after-selection':
+        return {
+          id: `${action.type}-${index}`,
+          title: `修改 ${index + 1}: 在当前选区后追加`,
+          beforeText: truncatePreviewText(selectionTextSnapshot),
+          afterText: truncatePreviewText(`${selectionTextSnapshot}${action.text}`),
+          detail: action.reason,
+        };
+      case 'insert-text':
+        return {
+          id: `${action.type}-${index}`,
+          title: `修改 ${index + 1}: 插入文本`,
+          afterText: truncatePreviewText(action.text),
+          detail: action.reason,
+        };
+      case 'replace-document':
+        return {
+          id: `${action.type}-${index}`,
+          title: `修改 ${index + 1}: 替换整篇正文`,
+          beforeText: truncatePreviewText(documentTextSnapshot, 320),
+          afterText: truncatePreviewText(action.text, 320),
+          detail: action.reason,
+        };
+      case 'execute-command':
+      default:
+        return {
+          id: `${action.type}-${index}`,
+          title: `修改 ${index + 1}: 执行文档命令`,
+          detail: `${action.command}${action.reason ? ` - ${action.reason}` : ''}`,
+        };
+    }
+  });
+}
+
+function buildDirectGenerationRequirements(requirements: string, targetWordCount: number | null): string {
+  const parts: string[] = [];
+
+  if (targetWordCount && targetWordCount > 0) {
+    parts.push(`目标字数：约 ${Math.round(targetWordCount)} 字`);
+  }
+
+  if (requirements.trim()) {
+    parts.push(`补充写作要求：\n${requirements.trim()}`);
+  }
+
+  return parts.join('\n\n').trim();
+}
+
+function normalizeDraftTitle(rawTitle: string, fallbackTitle: string): string {
+  const trimmed = rawTitle.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+
+  const fallback = fallbackTitle.trim();
+  if (fallback && fallback !== '未命名文稿') {
+    return fallback;
+  }
+
+  return '未命名文稿';
+}
+
 export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
   const editor = useEditorStore((state) => state.editor);
   const selectedText = useEditorStore((state) => state.selectedText);
   const activeSectionTitle = useEditorStore((state) => state.activeSectionTitle);
   const documentEngineAdapter = useDocumentEngineStore((state) => state.adapter);
   const doc = useProjectStore((state) => state.doc);
+  const setDoc = useProjectStore((state) => state.setDoc);
+  const setFrameworkNodes = useFrameworkStore((state) => state.setNodes);
   const getActiveConfig = useSettingsStore((state) => state.getActiveConfig);
   const getWritingConfig = useSettingsStore((state) => state.getWritingConfig);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     createMessage(
       'assistant',
-      '我是 AI 助手。你可以直接和我对话，也可以让我基于当前文档、章节和选中文本直接执行编辑。'
+      '我是 AI 助手。你可以直接和我对话、润色当前选区，也可以把论文题目和大纲直接贴给我，我会按结构生成整篇初稿。'
     ),
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [previewText, setPreviewText] = useState('');
+  const [status, setStatus] = useState<AgentStatusState | null>(null);
+  const [previewState, setPreviewState] = useState<TextPreviewState | null>(null);
+  const [pendingPlan, setPendingPlan] = useState<PendingAgentPlan | null>(null);
   const [generatingFullPaper, setGeneratingFullPaper] = useState(false);
   const [fullPaperProgress, setFullPaperProgress] = useState<FullPaperGenerationProgress | null>(null);
+  const [directTitle, setDirectTitle] = useState(() =>
+    doc.title && doc.title !== '未命名文稿' ? doc.title : ''
+  );
+  const [directOutline, setDirectOutline] = useState('');
+  const [directRequirements, setDirectRequirements] = useState('');
+  const [directWordCount, setDirectWordCount] = useState<number | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
   const taskSteps = fullPaperProgress
     ? [
         {
@@ -92,14 +229,27 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
     : [];
 
   useEffect(() => {
+    if (!directTitle && doc.title && doc.title !== '未命名文稿') {
+      setDirectTitle(doc.title);
+    }
+  }, [directTitle, doc.title]);
+
+  useEffect(() => {
     (window as { __aiPreviewResult?: (text: string) => void }).__aiPreviewResult = (text: string) => {
-      setPreviewText(text);
+      const config = getWritingConfig();
+      setPreviewState({
+        originalText: '',
+        resultText: text,
+        actionType: 'polish',
+        provider: config.provider,
+        model: config.model,
+      });
     };
 
     return () => {
       delete (window as { __aiPreviewResult?: (text: string) => void }).__aiPreviewResult;
     };
-  }, []);
+  }, [getWritingConfig]);
 
   useEffect(() => {
     const handleProgress = (event: Event) => {
@@ -118,7 +268,7 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, previewText]);
+  }, [messages, previewState, pendingPlan]);
 
   const pushMessage = (role: ChatMessage['role'], content: string) => {
     setMessages((prev) => [...prev, createMessage(role, content)]);
@@ -136,87 +286,97 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
     return editor.state.doc.textBetween(from, to, ' ');
   };
 
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text) {
-      return;
-    }
-
-    setInput('');
-    pushMessage('user', text);
-    setLoading(true);
-
-    try {
-      const documentText = await getCurrentDocumentText();
-      const response = await chatWithAssistant({
-        message: text,
-        selectedText: selectedText || '',
-        activeSectionTitle: activeSectionTitle || '',
-        headingPath: activeSectionTitle ? [activeSectionTitle] : [],
-        documentTitle: doc.title,
-        documentPlan: doc.documentState.documentPlan || doc.documentPlan || '',
-        documentText,
-        aiConfig: getActiveConfig(),
-      });
-
-      pushMessage('assistant', response.message || '已收到请求。');
-
-      if (response.actions.length > 0) {
-        const result = await executeAgentActions(response.actions);
-        if (result.appliedCount > 0 && result.failedCount === 0) {
-          pushMessage('assistant', `已执行 ${result.appliedCount} 条编辑动作。`);
-          message.success(`AI 已执行 ${result.appliedCount} 条编辑动作`);
-        } else if (result.appliedCount > 0) {
-          pushMessage(
-            'assistant',
-            `已执行 ${result.appliedCount} 条编辑动作，另有 ${result.failedCount} 条未成功执行。`
-          );
-          message.warning(`已执行 ${result.appliedCount} 条动作，${result.failedCount} 条失败`);
-        } else {
-          pushMessage('assistant', '这次我理解了你的意图，但没有成功执行到文档里。');
-          message.warning('AI 动作未成功应用到文档');
-        }
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '这次请求失败了，请稍后再试。';
-      pushMessage('assistant', errorMessage);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickAction = async (action: 'polish' | 'concise' | 'expand') => {
+  const handleQuickAction = async (action: TextPreviewState['actionType']) => {
     const text = await resolveSelectedText();
     if (!text) {
       message.warning('请先在编辑区选中需要处理的文本。');
       return;
     }
 
-    const styleMap: Record<typeof action, PolishRequest['style']> = {
+    const styleMap: Record<TextPreviewState['actionType'], PolishRequest['style']> = {
       polish: 'academic',
       concise: 'concise',
       expand: 'expand',
     };
-    const labelMap: Record<typeof action, string> = {
+    const labelMap: Record<TextPreviewState['actionType'], string> = {
       polish: '润色',
       concise: '精简',
       expand: '扩写',
     };
 
     pushMessage('user', `${labelMap[action]}当前选中文本：${text.slice(0, 100)}${text.length > 100 ? '...' : ''}`);
+    setStatus({
+      type: 'info',
+      text: `正在${labelMap[action]}当前选中文本，请稍候...`,
+    });
+    message.open({
+      key: 'agent-quick-action',
+      type: 'loading',
+      content: `正在${labelMap[action]}当前选中文本...`,
+      duration: 0,
+    });
     setLoading(true);
 
     try {
+      const config = getWritingConfig();
       const result = await aiPolish({
         originalText: text,
         style: styleMap[action],
-        aiConfig: getWritingConfig(),
+        aiConfig: config,
       });
-      setPreviewText(result);
-      pushMessage('assistant', `${labelMap[action]}结果已生成，请先预览，再决定是否应用到正文。`);
-      message.success(`${labelMap[action]}结果已生成`);
+      const applyResult = await replaceSelectionWithAgentTracking({
+        text: result,
+        expectedSelectionText: text,
+        provider: config.provider,
+        model: config.model,
+        reason: `quick-${action}`,
+      });
+
+      if (applyResult.selectionChanged) {
+        const warning = '当前选区在 AI 处理过程中发生了变化，为避免替换错位置，请重新选中文本后再试。';
+        setStatus({
+          type: 'error',
+          text: warning,
+        });
+        message.open({
+          key: 'agent-quick-action',
+          type: 'warning',
+          content: warning,
+        });
+        pushMessage('assistant', warning);
+        return;
+      }
+
+      if (!applyResult.applied) {
+        throw new Error('AI 已返回结果，但未能写入当前选区');
+      }
+
+      setPreviewState(null);
+      const successText = `${labelMap[action]}结果已直接替换当前选区。`;
+      pushMessage('assistant', successText);
+      setStatus({
+        type: 'success',
+        text: applyResult.saveError ? `${successText} 自动保存失败，请手动保存一次。` : successText,
+      });
+      message.open({
+        key: 'agent-quick-action',
+        type: applyResult.saveError ? 'warning' : 'success',
+        content: applyResult.saveError ? `${successText} 自动保存失败` : successText,
+      });
+      if (applyResult.saveError) {
+        message.warning(applyResult.saveError);
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '操作失败，请检查模型配置后重试。';
+      setStatus({
+        type: 'error',
+        text: `${labelMap[action]}失败：${errorMessage}`,
+      });
+      message.open({
+        key: 'agent-quick-action',
+        type: 'error',
+        content: `${labelMap[action]}失败：${errorMessage}`,
+      });
       message.error(errorMessage);
       pushMessage('assistant', errorMessage);
     } finally {
@@ -224,12 +384,67 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
     }
   };
 
-  const handleGenerateFullPaper = async () => {
-    if (!doc.framework.length) {
-      message.warning('请先导入文档大纲，再生成整篇论文。');
+  const handleSafeSend = async () => {
+    const text = input.trim();
+    if (!text) {
       return;
     }
 
+    const selectionSnapshot = await resolveSelectedText();
+    setInput('');
+    pushMessage('user', text);
+    setStatus({
+      type: 'info',
+      text: '正在分析你的请求并生成处理方案...',
+    });
+    setLoading(true);
+
+    try {
+      const documentText = await getCurrentDocumentText();
+      const config = getActiveConfig();
+      const response = await chatWithAssistant({
+        message: text,
+        selectedText: selectionSnapshot,
+        activeSectionTitle: activeSectionTitle || '',
+        headingPath: activeSectionTitle ? [activeSectionTitle] : [],
+        documentTitle: doc.title,
+        documentPlan: doc.documentState.documentPlan || doc.documentPlan || '',
+        documentText,
+        aiConfig: config,
+      });
+
+      pushMessage('assistant', response.message || '已收到你的请求。');
+      setStatus({
+        type: 'success',
+        text: response.actions.length > 0 ? 'AI 已生成待确认修改。' : 'AI 已返回答复。',
+      });
+
+      if (response.actions.length > 0) {
+        setPendingPlan({
+          actions: response.actions,
+          selectionTextSnapshot: selectionSnapshot,
+          documentTextSnapshot: documentText,
+          provider: config.provider,
+          model: config.model,
+          previewItems: buildPendingPlanPreviewItems(response.actions, selectionSnapshot, documentText),
+        });
+        pushMessage('assistant', `我整理了 ${response.actions.length} 个待执行修改，请确认后再应用到文稿。`);
+        message.info('AI 修改已进入待确认列表');
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '这次请求失败了，请稍后再试。';
+      setStatus({
+        type: 'error',
+        text: errorMessage,
+      });
+      pushMessage('assistant', errorMessage);
+      message.error(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startFullPaperGeneration = async (userMessage: string, successMessage: string) => {
     setGeneratingFullPaper(true);
     setFullPaperProgress({
       stage: 'preparing',
@@ -238,7 +453,7 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
       percent: 0,
       statusText: '正在准备生成任务',
     });
-    pushMessage('user', '请根据当前大纲生成整篇论文初稿。');
+    pushMessage('user', userMessage);
 
     try {
       const applied = await executeDocumentCommand('generate-full-paper');
@@ -246,7 +461,7 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
         throw new Error('未能启动整篇论文生成。');
       }
 
-      pushMessage('assistant', '已根据当前大纲和内置论文规范生成完整论文，并写入编辑区。');
+      pushMessage('assistant', successMessage);
       message.success('整篇论文已生成');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '整篇论文生成失败';
@@ -257,24 +472,189 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
     }
   };
 
+  const handleGenerateFullPaper = async () => {
+    if (!doc.framework.length) {
+      if (directOutline.trim()) {
+        await handleDirectGenerateFullPaper();
+        return;
+      }
+      message.warning('请先粘贴论文大纲，或使用当前文档结构后再生成整篇论文。');
+      return;
+    }
+
+    await startFullPaperGeneration(
+      '请根据当前文档结构生成整篇论文初稿。',
+      '已根据当前文档结构和内置论文规范生成完整论文，并写入编辑区。'
+    );
+  };
+
+  const handleDirectGenerateFullPaper = async () => {
+    const outlineText = directOutline.trim();
+    const framework = outlineText ? parseOutlineText(outlineText) : doc.framework;
+
+    if (framework.length === 0) {
+      message.warning('请先粘贴可识别的大纲，或先在文档中建立章节结构。');
+      return;
+    }
+
+    const title = normalizeDraftTitle(directTitle, doc.title);
+    const extraRequirements = buildDirectGenerationRequirements(directRequirements, directWordCount);
+
+    const nextDoc = syncDocumentWithState({
+      ...doc,
+      title,
+      framework,
+      documentPlan: extraRequirements,
+      updatedAt: new Date().toISOString(),
+      documentState: {
+        ...doc.documentState,
+        outline: framework,
+        documentPlan: extraRequirements,
+      },
+    });
+
+    setDoc(nextDoc);
+    setFrameworkNodes(framework);
+
+    const promptParts = [`题目：${title}`];
+    if (outlineText) {
+      promptParts.push(`大纲：\n${outlineText}`);
+    } else {
+      promptParts.push('使用当前文档结构生成全文。');
+    }
+    if (extraRequirements) {
+      promptParts.push(`补充要求：\n${extraRequirements}`);
+    }
+
+    await startFullPaperGeneration(
+      `请根据以下信息直接生成整篇论文初稿：\n\n${promptParts.join('\n\n')}`,
+      '已根据你提供的题目、大纲和补充要求生成整篇论文，并写入编辑区。'
+    );
+  };
+
   const applyPreview = async () => {
-    if (!previewText) {
+    if (!previewState) {
       return;
     }
 
     try {
-      const applied = await replaceCurrentSelection(previewText);
-      if (!applied) {
+      const result = await executeAgentActionsWithTracking(
+        [
+          {
+            type: 'replace-selection',
+            text: previewState.resultText,
+            reason: `quick-${previewState.actionType}`,
+          },
+        ],
+        {
+          provider: previewState.provider,
+          model: previewState.model,
+        }
+      );
+
+      if (result.appliedCount <= 0) {
         return;
       }
 
       pushMessage('assistant', '已将预览结果应用到当前选区。');
-      setPreviewText('');
+      setStatus({
+        type: 'success',
+        text: '预览结果已应用到正文。',
+      });
+      setPreviewState(null);
       message.success('已应用到正文');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : '应用失败';
+      setStatus({
+        type: 'error',
+        text: errorMessage,
+      });
       message.error(errorMessage);
     }
+  };
+
+  const applyPendingPlan = async () => {
+    if (!pendingPlan) {
+      return;
+    }
+
+    const requiresSelection = pendingPlan.actions.some(isSelectionBoundAction);
+    if (requiresSelection) {
+      const currentSelection = await resolveSelectedText();
+      if (currentSelection !== pendingPlan.selectionTextSnapshot) {
+        const warning =
+          pendingPlan.selectionTextSnapshot.trim().length > 0
+            ? '当前选区已经变化。为避免改错位置，请重新选中原文后再应用这组修改。'
+            : '这组修改依赖当前选区，但现在没有匹配的选中文本，请重新选择目标内容。';
+        pushMessage('assistant', warning);
+        setStatus({
+          type: 'error',
+          text: warning,
+        });
+        message.warning('当前选区已变化，请重新选择目标内容');
+        return;
+      }
+    }
+
+    setLoading(true);
+    try {
+      const result = await executeAgentActionsWithTracking(pendingPlan.actions, {
+        provider: pendingPlan.provider,
+        model: pendingPlan.model,
+      });
+
+      if (result.appliedCount > 0 && result.failedCount === 0) {
+        pushMessage('assistant', `已应用 ${result.appliedCount} 个修改动作。`);
+        setStatus({
+          type: 'success',
+          text: `已成功应用 ${result.appliedCount} 个修改动作。`,
+        });
+        message.success(`已应用 ${result.appliedCount} 个修改动作`);
+        setPendingPlan(null);
+      } else if (result.appliedCount > 0) {
+        pushMessage(
+          'assistant',
+          `已应用 ${result.appliedCount} 个修改动作，另有 ${result.failedCount} 个执行失败。`
+        );
+        setStatus({
+          type: 'error',
+          text: `已应用 ${result.appliedCount} 个动作，但还有 ${result.failedCount} 个失败。`,
+        });
+        message.warning(`已应用 ${result.appliedCount} 个动作，${result.failedCount} 个失败`);
+        setPendingPlan(null);
+      } else {
+        pushMessage('assistant', '这组待确认修改没有成功应用到文稿。');
+        setStatus({
+          type: 'error',
+          text: '待确认修改未能成功应用到文稿。',
+        });
+        message.warning('待确认修改未能应用');
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '应用待确认修改失败';
+      setStatus({
+        type: 'error',
+        text: errorMessage,
+      });
+      pushMessage('assistant', errorMessage);
+      message.error(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const discardPendingPlan = () => {
+    if (!pendingPlan) {
+      return;
+    }
+
+    setPendingPlan(null);
+    setStatus({
+      type: 'info',
+      text: '已取消这组待确认修改。',
+    });
+    pushMessage('assistant', '已取消这组待确认修改。');
+    message.info('已取消待确认修改');
   };
 
   return (
@@ -300,6 +680,65 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
           <RobotOutlined /> AI 助手
         </div>
       ) : null}
+
+      <div
+        style={{
+          margin: '12px 12px 0',
+          padding: 12,
+          border: '1px solid #d9d9d9',
+          borderRadius: 10,
+          background: '#ffffff',
+        }}
+      >
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#1f1f1f', marginBottom: 6 }}>直接贴大纲生成全文</div>
+        <div style={{ fontSize: 11, color: '#6b7280', lineHeight: 1.6, marginBottom: 10 }}>
+          不想先导入大纲时，可以直接在这里填题目、粘贴目录和写作要求，AI 会先写入结构，再生成整篇论文初稿。
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Input
+            size="small"
+            value={directTitle}
+            onChange={(event) => setDirectTitle(event.target.value)}
+            placeholder="论文题目，例如：基于大模型的论文写作助手设计"
+          />
+          <Input.TextArea
+            size="small"
+            value={directOutline}
+            onChange={(event) => setDirectOutline(event.target.value)}
+            placeholder={'粘贴章节大纲，例如：\n一、绪论\n（一）研究背景\n（二）研究意义\n二、系统设计'}
+            rows={5}
+          />
+          <Input.TextArea
+            size="small"
+            value={directRequirements}
+            onChange={(event) => setDirectRequirements(event.target.value)}
+            placeholder="补充写作要求，例如：学术风格、突出方法创新、每章尽量自然过渡"
+            rows={3}
+          />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <InputNumber
+              size="small"
+              style={{ flex: 1 }}
+              min={500}
+              max={50000}
+              step={500}
+              value={directWordCount}
+              onChange={(value) => setDirectWordCount(typeof value === 'number' ? value : null)}
+              placeholder="目标字数"
+            />
+            <Button
+              size="small"
+              type="primary"
+              icon={<RobotOutlined />}
+              onClick={() => void handleDirectGenerateFullPaper()}
+              loading={generatingFullPaper}
+              disabled={loading}
+            >
+              按大纲生成
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {fullPaperProgress ? (
         <div
@@ -331,9 +770,7 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
             status={fullPaperProgress.stage === 'completed' ? 'success' : 'active'}
             style={{ marginBottom: 8 }}
           />
-          <div style={{ fontSize: 12, color: '#262626', lineHeight: 1.6 }}>
-            {fullPaperProgress.statusText}
-          </div>
+          <div style={{ fontSize: 12, color: '#262626', lineHeight: 1.6 }}>{fullPaperProgress.statusText}</div>
           {fullPaperProgress.title ? (
             <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
               当前章节：{fullPaperProgress.title}
@@ -376,7 +813,19 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
         </div>
       ) : null}
 
-      {previewText ? (
+      {status ? (
+        <div style={{ margin: '12px 12px 0' }}>
+          <Alert
+            type={status.type}
+            showIcon
+            message={status.text}
+            closable
+            onClose={() => setStatus(null)}
+          />
+        </div>
+      ) : null}
+
+      {previewState ? (
         <div
           style={{
             margin: '12px 12px 0',
@@ -397,7 +846,7 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
           >
             <div style={{ fontSize: 12, fontWeight: 700, color: '#0958d9' }}>AI 预览结果</div>
             <div style={{ display: 'flex', gap: 6 }}>
-              <Button size="small" onClick={() => setPreviewText('')}>
+              <Button size="small" onClick={() => setPreviewState(null)}>
                 放弃
               </Button>
               <Button size="small" type="primary" onClick={() => void applyPreview()}>
@@ -407,15 +856,124 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
           </div>
           <div
             style={{
-              maxHeight: 160,
+              maxHeight: 220,
               overflow: 'auto',
-              whiteSpace: 'pre-wrap',
               fontSize: 12,
               lineHeight: 1.7,
               color: '#262626',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
             }}
           >
-            {previewText}
+            {previewState.originalText ? (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#595959', marginBottom: 4 }}>原文</div>
+                <div
+                  style={{
+                    whiteSpace: 'pre-wrap',
+                    background: '#fff',
+                    border: '1px solid #d9e8ff',
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                  }}
+                >
+                  {previewState.originalText}
+                </div>
+              </div>
+            ) : null}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#0958d9', marginBottom: 4 }}>修改后</div>
+              <div
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  background: '#fff',
+                  border: '1px solid #91caff',
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                }}
+              >
+                {previewState.resultText}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingPlan ? (
+        <div
+          style={{
+            margin: '12px 12px 0',
+            padding: 12,
+            border: '1px solid #ffe58f',
+            borderRadius: 10,
+            background: '#fffbe6',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 8,
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#ad6800' }}>待确认修改</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <Button size="small" onClick={discardPendingPlan}>
+                取消
+              </Button>
+              <Button size="small" type="primary" onClick={() => void applyPendingPlan()} loading={loading}>
+                应用
+              </Button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 240, overflow: 'auto' }}>
+            {pendingPlan.previewItems.map((item) => (
+              <div
+                key={item.id}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: 8,
+                  background: '#fff',
+                  border: '1px solid #f5d27a',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  color: '#262626',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: item.beforeText || item.afterText ? 8 : 0 }}>
+                  {item.title}
+                </div>
+                {item.detail ? (
+                  <div style={{ marginBottom: item.beforeText || item.afterText ? 8 : 0 }}>{item.detail}</div>
+                ) : null}
+                {item.beforeText ? (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: '#595959', marginBottom: 4 }}>当前内容</div>
+                    <div style={{ background: '#fff7e6', borderRadius: 6, padding: '6px 8px' }}>{item.beforeText}</div>
+                  </div>
+                ) : null}
+                {item.afterText ? (
+                  <div>
+                    <div style={{ fontSize: 11, color: '#ad6800', marginBottom: 4 }}>应用后</div>
+                    <div
+                      style={{
+                        background: '#fff',
+                        borderRadius: 6,
+                        padding: '6px 8px',
+                        border: '1px solid #f5d27a',
+                      }}
+                    >
+                      {item.afterText}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ))}
           </div>
         </div>
       ) : null}
@@ -471,7 +1029,7 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
         ))}
         {loading ? (
           <div style={{ fontSize: 11, color: '#8c8c8c', padding: '2px 8px' }}>
-            <RobotOutlined /> AI 正在处理...
+            <RobotOutlined /> {status?.type === 'info' ? status.text : 'AI 正在处理...'}
           </div>
         ) : null}
         <div ref={chatEndRef} />
@@ -487,7 +1045,7 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
           disabled={loading}
           style={{ fontSize: 11 }}
         >
-          生成全文
+          当前结构生成
         </Button>
         <Button
           size="small"
@@ -526,7 +1084,7 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
           onPressEnter={(event) => {
             if (!event.shiftKey) {
               event.preventDefault();
-              void handleSend();
+              void handleSafeSend();
             }
           }}
           placeholder="输入问题，或直接让我修改当前文档、当前章节、选中文本。"
@@ -537,7 +1095,7 @@ export function AgentPanel({ embedded = false }: { embedded?: boolean }) {
           type="primary"
           size="small"
           icon={<SendOutlined />}
-          onClick={() => void handleSend()}
+          onClick={() => void handleSafeSend()}
           loading={loading}
           style={{ alignSelf: 'flex-end' }}
         />

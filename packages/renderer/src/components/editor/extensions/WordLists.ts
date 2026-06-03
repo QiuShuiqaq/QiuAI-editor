@@ -18,8 +18,6 @@ declare module '@tiptap/core' {
     wordList: {
       indentListItem: () => ReturnType;
       outdentListItem: () => ReturnType;
-      toggleBulletList: () => ReturnType;
-      toggleOrderedList: () => ReturnType;
     };
   }
 }
@@ -42,18 +40,7 @@ export const WordLists = Extension.create<WordListsOptions>({
           const { $from } = selection;
           const node = $from.node($from.depth);
           if (node?.type.name === 'listItem') {
-            return chain().command(({ tr }) => {
-              // Find the parent list and wrap in another list
-              const listPos = $from.before($from.depth);
-              const parentList = $from.node($from.depth - 1);
-              if (parentList?.type.name === 'bulletList' || parentList?.type.name === 'orderedList') {
-                const childListType = parentList.type.name;
-                // Wrap current item's content in a sub-list
-                tr.split($from.pos, 1);
-                return true;
-              }
-              return false;
-            }).run();
+            return chain().sinkListItem('listItem').run();
           }
           // Tab not in list: indent paragraph
           return chain().setParagraphAttrs({ marginLeft: '36pt' }).run();
@@ -71,18 +58,6 @@ export const WordLists = Extension.create<WordListsOptions>({
           }
           // Shift+Tab not in list: outdent paragraph
           return chain().setParagraphAttrs({ marginLeft: null }).run();
-        },
-
-      toggleBulletList:
-        () =>
-        ({ chain }) => {
-          return chain().toggleBulletList().run();
-        },
-
-      toggleOrderedList:
-        () =>
-        ({ chain }) => {
-          return chain().toggleOrderedList().run();
         },
     };
   },
