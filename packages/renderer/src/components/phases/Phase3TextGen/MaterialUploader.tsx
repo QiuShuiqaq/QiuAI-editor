@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Button, List, Tag, message, Space } from 'antd';
-import { UploadOutlined, DeleteOutlined, FileTextOutlined, FilePdfOutlined } from '@ant-design/icons';
-import { IPC_CHANNELS, type IPCResponse, type ReferenceMaterial, generateId } from '@qiuai/shared';
+import { Button, List, Space, Tag, message } from 'antd';
+import { DeleteOutlined, FilePdfOutlined, FileTextOutlined } from '@ant-design/icons';
+import { IPC_CHANNELS, type IPCResponse, type ReferenceMaterial } from '@qiuai/shared';
 import { ipcClient } from '../../../services/ipcClient';
 
 interface MaterialUploaderProps {
@@ -33,36 +33,26 @@ export function MaterialUploader({ materials, onMaterialsChange }: MaterialUploa
   };
 
   const handleRemove = (id: string) => {
-    onMaterialsChange(materials.filter((m) => m.id !== id));
+    onMaterialsChange(materials.filter((item) => item.id !== id));
   };
 
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 13, fontWeight: 500 }}>参考资料</span>
+        <span style={{ fontSize: 13, fontWeight: 500 }}>参考材料</span>
         <span style={{ fontSize: 11, color: '#999' }}>{materials.length} 个文件</span>
       </div>
 
       <Space size="small" style={{ marginBottom: 8 }}>
-        <Button
-          size="small"
-          icon={<FilePdfOutlined />}
-          onClick={() => handleUpload('pdf')}
-          loading={uploading}
-        >
-          导入PDF
+        <Button size="small" icon={<FilePdfOutlined />} onClick={() => handleUpload('pdf')} loading={uploading}>
+          导入 PDF
         </Button>
-        <Button
-          size="small"
-          icon={<FileTextOutlined />}
-          onClick={() => handleUpload('docx')}
-          loading={uploading}
-        >
-          导入DOCX
+        <Button size="small" icon={<FileTextOutlined />} onClick={() => handleUpload('docx')} loading={uploading}>
+          导入 DOCX
         </Button>
       </Space>
 
-      {materials.length > 0 && (
+      {materials.length > 0 ? (
         <List
           size="small"
           dataSource={materials}
@@ -72,7 +62,7 @@ export function MaterialUploader({ materials, onMaterialsChange }: MaterialUploa
               style={{ padding: '4px 8px' }}
               actions={[
                 <Button
-                  key="del"
+                  key="delete"
                   type="text"
                   size="small"
                   danger
@@ -93,10 +83,10 @@ export function MaterialUploader({ materials, onMaterialsChange }: MaterialUploa
             </List.Item>
           )}
         />
-      )}
+      ) : null}
 
       <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
-        上传申报书相关的参考PDF/DOCX文件，AI将基于这些材料生成内容
+        上传与当前报告相关的 PDF 或 DOCX 材料，AI 会优先基于这些内容给出更可靠的写作建议。
       </div>
     </div>
   );

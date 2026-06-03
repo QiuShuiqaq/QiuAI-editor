@@ -1,85 +1,68 @@
 import { useEffect } from 'react';
-import { useEditorStore } from '../stores/useEditorStore';
-import { useProjectStore } from '../stores/useProjectStore';
-import { IPC_CHANNELS, type IPCResponse } from '@qiuai/shared';
-import { ipcClient } from '../services/ipcClient';
-import { formatPainter } from '../services/formatPainter';
 import { message } from 'antd';
+import { formatPainter } from '../services/formatPainter';
+import { saveCurrentDocument } from '../services/documentEngineCommands';
+import { useDocumentEngineStore } from '../stores/useDocumentEngineStore';
+import { useEditorStore } from '../stores/useEditorStore';
+import { supportsDocumentCommands } from '../utils/documentEngineCapabilities';
 
 export function useKeyboardShortcuts() {
-  const editor = useEditorStore((s) => s.editor);
-  const doc = useProjectStore((s) => s.doc);
-  const setDirty = useEditorStore((s) => s.setDirty);
+  const editor = useEditorStore((state) => state.editor);
+  const setDirty = useEditorStore((state) => state.setDirty);
 
   useEffect(() => {
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
+    const handleKeyDown = async (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey;
+      const documentEngineAdapter = useDocumentEngineStore.getState().adapter;
+      const runPreviewCommand = async (command: string, payload: Record<string, unknown> = {}) => {
+        if (!supportsDocumentCommands(documentEngineAdapter) || !documentEngineAdapter?.executeCommand) {
+          return false;
+        }
+        return documentEngineAdapter.executeCommand(command, payload);
+      };
 
-      // ESC: Exit format painter
-      if (e.key === 'Escape') {
+      if (event.key === 'Escape') {
         if (formatPainter.isActive) {
-          e.preventDefault();
+          event.preventDefault();
           formatPainter.clear();
-          return;
         }
         return;
       }
 
-      // Ctrl+S: Save
-      if (mod && e.key === 's') {
-        e.preventDefault();
+      if (mod && event.key.toLowerCase() === 's') {
+        event.preventDefault();
         try {
-          const currentDoc = useProjectStore.getState().doc;
-          const currentEditor = useEditorStore.getState().editor;
-          const docToSave = {
-            ...currentDoc,
-            editorContent: currentEditor?.getJSON() || currentDoc.editorContent,
-            updatedAt: new Date().toISOString(),
-          };
-
-          const result = await ipcClient.invoke<IPCResponse>(
-            IPC_CHANNELS.FILE_SAVE_DRAFT,
-            docToSave
-          );
-
-          if (result.success) {
-            setDirty(false);
-            message.success('已保存');
-          } else {
-            message.error('保存失败');
-          }
+          await saveCurrentDocument();
+          setDirty(false);
+          message.success('文档已保存');
         } catch {
           message.error('保存失败');
         }
         return;
       }
 
-      // Ctrl+F: Find
-      if (mod && !e.shiftKey && e.key === 'f') {
-        e.preventDefault();
-        (window as any).__editorShowFind?.();
+      if (mod && !event.shiftKey && event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        (window as { __editorShowFind?: () => void }).__editorShowFind?.();
         return;
       }
 
-      // Ctrl+H: Replace
-      if (mod && !e.shiftKey && e.key === 'h') {
-        e.preventDefault();
-        (window as any).__editorShowReplace?.();
+      if (mod && !event.shiftKey && event.key.toLowerCase() === 'h') {
+        event.preventDefault();
+        (window as { __editorShowReplace?: () => void }).__editorShowReplace?.();
         return;
       }
 
-      // Ctrl+Shift+C: Copy format (format painter)
-      if (mod && e.shiftKey && e.key === 'C') {
-        e.preventDefault();
+      if (mod && event.shiftKey && event.key.toLowerCase() === 'c') {
+        event.preventDefault();
         formatPainter.copyFormat();
         formatPainter.activate(false);
-        message.success('格式已复制 — 点击目标文本粘贴格式');
+        message.success('格式已复制，点击目标文本即可套用格式');
         return;
       }
 
-      // Ctrl+Shift+V: Paste format
-      if (mod && e.shiftKey && e.key === 'V') {
-        e.preventDefault();
+      if (mod && event.shiftKey && event.key.toLowerCase() === 'v') {
+        event.preventDefault();
         if (formatPainter.isActive) {
           formatPainter.pasteFormat();
         } else {
@@ -88,67 +71,80 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // Ctrl+Space or Ctrl+Shift+N: Clear formatting
-      if ((mod && !e.shiftKey && e.key === ' ') || (mod && e.shiftKey && e.key === 'N')) {
-        e.preventDefault();
-        editor?.chain().focus().unsetAllMarks().run();
-        editor?.chain().focus().setParagraphAttrs({
-          lineHeight: null, textIndent: '2em', marginLeft: null,
-          marginRight: null, spaceBefore: null, spaceAfter: '8px', textAlign: null,
-        }).run();
+      if ((mod && !event.shiftKey && event.key === ' ') || (mod && event.shiftKey && event.key.toLowerCase() === 'n')) {
+        event.preventDefault();
+        if (!(await runPreviewCommand('clear-formatting'))) {
+          editor?.chain().focus().unsetAllMarks().run();
+          editor
+            ?.chain()
+            .focus()
+            .setParagraphAttrs({
+              lineHeight: null,
+              textIndent: '2em',
+              marginLeft: null,
+              marginRight: null,
+              spaceBefore: null,
+              spaceAfter: '8px',
+              textAlign: null,
+            })
+            .run();
+        }
         message.success('已清除格式');
         return;
       }
 
-      // Ctrl+B: Bold
-      if (mod && e.key === 'b') {
-        e.preventDefault();
-        editor?.chain().focus().toggleBold().run();
+      if (mod && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        if (!(await runPreviewCommand('toggle-bold'))) {
+          editor?.chain().focus().toggleBold().run();
+        }
         return;
       }
 
-      // Ctrl+I: Italic
-      if (mod && e.key === 'i') {
-        e.preventDefault();
-        editor?.chain().focus().toggleItalic().run();
+      if (mod && event.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        if (!(await runPreviewCommand('toggle-italic'))) {
+          editor?.chain().focus().toggleItalic().run();
+        }
         return;
       }
 
-      // Ctrl+U: Underline
-      if (mod && e.key === 'u') {
-        e.preventDefault();
-        editor?.chain().focus().toggleUnderline().run();
+      if (mod && event.key.toLowerCase() === 'u') {
+        event.preventDefault();
+        if (!(await runPreviewCommand('toggle-underline'))) {
+          editor?.chain().focus().toggleUnderline().run();
+        }
         return;
       }
 
-      // Ctrl+Z: Undo
-      if (mod && !e.shiftKey && e.key === 'z') {
-        e.preventDefault();
-        editor?.chain().focus().undo().run();
+      if (mod && !event.shiftKey && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        if (!(await runPreviewCommand('undo'))) {
+          editor?.chain().focus().undo().run();
+        }
         return;
       }
 
-      // Ctrl+Y or Ctrl+Shift+Z: Redo
-      if ((mod && e.key === 'y') || (mod && e.shiftKey && e.key === 'z')) {
-        e.preventDefault();
-        editor?.chain().focus().redo().run();
-        return;
+      if ((mod && event.key.toLowerCase() === 'y') || (mod && event.shiftKey && event.key.toLowerCase() === 'z')) {
+        event.preventDefault();
+        if (!(await runPreviewCommand('redo'))) {
+          editor?.chain().focus().redo().run();
+        }
       }
     };
 
-    // Also handle click on editor to paste format if painter is active
     const handleEditorClick = () => {
       if (formatPainter.isActive) {
-        // Paste format on click target
         formatPainter.pasteFormat();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     document.addEventListener('click', handleEditorClick);
+
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('click', handleEditorClick);
     };
-  }, [editor, doc, setDirty]);
+  }, [editor, setDirty]);
 }

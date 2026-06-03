@@ -1,9 +1,21 @@
-/**
- * EditorContextMenu — Word-like right-click context menu.
- * Shows different options based on: text selected, on image, on table, or no selection.
- */
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { message } from 'antd';
+import {
+  AlignCenterOutlined,
+  AlignLeftOutlined,
+  AlignRightOutlined,
+  BoldOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  FontColorsOutlined,
+  ItalicOutlined,
+  ScissorOutlined,
+  SearchOutlined,
+  UndoOutlined,
+  UnderlineOutlined,
+} from '@ant-design/icons';
+import { insertDocumentText, replaceCurrentSelection } from '../../services/documentEngineCommands';
 import { useEditorStore } from '../../stores/useEditorStore';
 
 interface ContextMenuState {
@@ -13,168 +25,306 @@ interface ContextMenuState {
 }
 
 interface MenuItem {
-  label: string;
+  key: string;
+  label?: string;
   shortcut?: string;
-  action: () => void;
+  icon?: React.ReactNode;
+  action?: () => void | Promise<void>;
   divider?: boolean;
   disabled?: boolean;
+  danger?: boolean;
 }
 
 export function EditorContextMenu() {
+  const editor = useEditorStore((state) => state.editor);
+  const formatting = useEditorStore((state) => state.formatting);
+  const selectedText = useEditorStore((state) => state.selectedText);
   const [menu, setMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0 });
-  const editor = useEditorStore((s) => s.editor);
-  const selectedText = useEditorStore((s) => s.selectedText);
-  const [hasSelection, setHasSelection] = useState(false);
   const [isImage, setIsImage] = useState(false);
 
-  // Track selection state
-  useEffect(() => {
-    setHasSelection(!!selectedText);
-  }, [selectedText]);
+  const hasSelection = Boolean(selectedText.trim());
 
-  // Handle right-click
   useEffect(() => {
     if (!editor) return;
 
-    const handleContextMenu = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
+    const handleContextMenu = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
       const editorDom = editor.view.dom;
 
-      // Check if click is inside the editor
       if (!editorDom.contains(target)) {
         setMenu({ visible: false, x: 0, y: 0 });
         return;
       }
 
-      e.preventDefault();
-
-      // Check if on an image
-      const onImage = target.tagName === 'IMG' || target.closest('img') !== null;
-      setIsImage(onImage);
-
-      setMenu({
-        visible: true,
-        x: e.clientX,
-        y: e.clientY,
-      });
+      event.preventDefault();
+      setIsImage(target.tagName === 'IMG' || target.closest('img') !== null);
+      setMenu({ visible: true, x: event.clientX, y: event.clientY });
     };
 
-    const handleClick = () => {
+    const handleClose = () => {
       setMenu({ visible: false, x: 0, y: 0 });
     };
 
     document.addEventListener('contextmenu', handleContextMenu);
-    document.addEventListener('click', handleClick);
+    document.addEventListener('click', handleClose);
+    window.addEventListener('blur', handleClose);
+
     return () => {
       document.removeEventListener('contextmenu', handleContextMenu);
-      document.removeEventListener('click', handleClick);
+      document.removeEventListener('click', handleClose);
+      window.removeEventListener('blur', handleClose);
     };
   }, [editor]);
 
-  const handleAction = useCallback((action: () => void) => {
-    action();
+  const runAction = useCallback(async (action?: () => void | Promise<void>) => {
+    if (!action) return;
+    await action();
     setMenu({ visible: false, x: 0, y: 0 });
   }, []);
 
+  const items = useMemo<MenuItem[]>(() => {
+    if (!editor) return [];
+
+    const baseItems: MenuItem[] = [
+      {
+        key: 'cut',
+        label: '剪切',
+        shortcut: 'Ctrl+X',
+        icon: <ScissorOutlined />,
+        disabled: !hasSelection,
+        action: async () => {
+          if (!selectedText.trim()) return;
+          await navigator.clipboard.writeText(selectedText);
+          await replaceCurrentSelection('');
+          message.success('已剪切选中文本');
+        },
+      },
+      {
+        key: 'copy',
+        label: '复制',
+        shortcut: 'Ctrl+C',
+        icon: <CopyOutlined />,
+        disabled: !hasSelection,
+        action: async () => {
+          if (!selectedText.trim()) return;
+          await navigator.clipboard.writeText(selectedText);
+          message.success('已复制选中文本');
+        },
+      },
+      {
+        key: 'paste',
+        label: '粘贴',
+        shortcut: 'Ctrl+V',
+        icon: <CopyOutlined />,
+        action: async () => {
+          try {
+            const text = await navigator.clipboard.readText();
+            if (!text) {
+              message.info('剪贴板当前没有文本');
+              return;
+            }
+            const applied = await insertDocumentText(text);
+            if (!applied) {
+              message.warning('当前插入位置无法粘贴文本，请调整光标位置后重试。');
+            }
+          } catch {
+            message.warning('当前环境未授予剪贴板读取权限');
+          }
+        },
+      },
+      { key: 'divider-1', divider: true },
+      {
+        key: 'bold',
+        label: formatting.isBold ? '取消加粗' : '加粗',
+        shortcut: 'Ctrl+B',
+        icon: <BoldOutlined />,
+        disabled: !hasSelection,
+        action: () => {
+          editor.chain().focus().toggleBold().run();
+        },
+      },
+      {
+        key: 'italic',
+        label: formatting.isItalic ? '取消斜体' : '斜体',
+        shortcut: 'Ctrl+I',
+        icon: <ItalicOutlined />,
+        disabled: !hasSelection,
+        action: () => {
+          editor.chain().focus().toggleItalic().run();
+        },
+      },
+      {
+        key: 'underline',
+        label: formatting.isUnderline ? '取消下划线' : '下划线',
+        shortcut: 'Ctrl+U',
+        icon: <UnderlineOutlined />,
+        disabled: !hasSelection,
+        action: () => {
+          editor.chain().focus().toggleUnderline().run();
+        },
+      },
+      {
+        key: 'text-color',
+        label: '字体颜色设为蓝色',
+        icon: <FontColorsOutlined />,
+        disabled: !hasSelection,
+        action: () => {
+          editor.chain().focus().setMark('textStyle', { color: '#1677ff' }).run();
+        },
+      },
+      { key: 'divider-2', divider: true },
+      {
+        key: 'align-left',
+        label: '左对齐',
+        icon: <AlignLeftOutlined />,
+        action: () => {
+          editor.chain().focus().setTextAlign('left').run();
+        },
+      },
+      {
+        key: 'align-center',
+        label: '居中',
+        icon: <AlignCenterOutlined />,
+        action: () => {
+          editor.chain().focus().setTextAlign('center').run();
+        },
+      },
+      {
+        key: 'align-right',
+        label: '右对齐',
+        icon: <AlignRightOutlined />,
+        action: () => {
+          editor.chain().focus().setTextAlign('right').run();
+        },
+      },
+      { key: 'divider-3', divider: true },
+      {
+        key: 'clear-format',
+        label: '清除格式',
+        shortcut: 'Ctrl+Space',
+        action: () => {
+          editor.chain().focus().unsetAllMarks().run();
+          editor
+            .chain()
+            .focus()
+            .setParagraphAttrs({
+              lineHeight: null,
+              textIndent: '2em',
+              marginLeft: null,
+              marginRight: null,
+              spaceBefore: null,
+              spaceAfter: '8px',
+              textAlign: null,
+            })
+            .run();
+          message.success('已清除格式');
+        },
+      },
+      {
+        key: 'paragraph',
+        label: '恢复为标准正文段落',
+        action: () => {
+          editor.chain().focus().setParagraphAttrs({ textIndent: '2em', lineHeight: '1.5' }).run();
+          message.success('已恢复正文段落样式');
+        },
+      },
+      { key: 'divider-4', divider: true },
+      {
+        key: 'undo',
+        label: '撤销',
+        shortcut: 'Ctrl+Z',
+        icon: <UndoOutlined />,
+        action: () => {
+          editor.chain().focus().undo().run();
+        },
+      },
+      {
+        key: 'find',
+        label: '查找',
+        shortcut: 'Ctrl+F',
+        icon: <SearchOutlined />,
+        action: () => (window as { __editorShowFind?: () => void }).__editorShowFind?.(),
+      },
+    ];
+
+    if (isImage) {
+      baseItems.push(
+        { key: 'divider-image', divider: true },
+        {
+          key: 'delete-image',
+          label: '删除图片',
+          icon: <DeleteOutlined />,
+          danger: true,
+          action: () => {
+            editor.chain().focus().deleteSelection().run();
+          },
+        }
+      );
+    }
+
+    return baseItems;
+  }, [editor, formatting.isBold, formatting.isItalic, formatting.isUnderline, hasSelection, isImage, selectedText]);
+
   if (!menu.visible || !editor) return null;
 
-  // Build menu items based on context
-  const items: MenuItem[] = [];
-
-  if (hasSelection) {
-    items.push(
-      { label: '剪切', shortcut: 'Ctrl+X', action: () => handleAction(() => document.execCommand('cut')) },
-      { label: '复制', shortcut: 'Ctrl+C', action: () => handleAction(() => document.execCommand('copy')) },
-      { label: '粘贴', shortcut: 'Ctrl+V', action: () => handleAction(() => navigator.clipboard.readText().then(t => editor.commands.insertContent(t))) },
-    );
-  } else {
-    items.push(
-      { label: '粘贴', shortcut: 'Ctrl+V', action: () => handleAction(() => navigator.clipboard.readText().then(t => editor.commands.insertContent(t))) },
-    );
-  }
-
-  items.push({ label: '', action: () => {}, divider: true });
-
-  if (hasSelection) {
-    items.push(
-      { label: '加粗', shortcut: 'Ctrl+B', action: () => handleAction(() => editor.chain().focus().toggleBold().run()) },
-      { label: '斜体', shortcut: 'Ctrl+I', action: () => handleAction(() => editor.chain().focus().toggleItalic().run()) },
-      { label: '下划线', shortcut: 'Ctrl+U', action: () => handleAction(() => editor.chain().focus().toggleUnderline().run()) },
-      { label: '', action: () => {}, divider: true },
-      { label: '清除格式', shortcut: 'Ctrl+Space', action: () => handleAction(() => {
-        editor.chain().focus().unsetAllMarks().run();
-        editor.chain().focus().setParagraphAttrs({
-          lineHeight: null, textIndent: '2em', marginLeft: null, marginRight: null,
-          spaceBefore: null, spaceAfter: '8px', textAlign: null,
-        }).run();
-      })},
-    );
-  }
-
-  items.push(
-    { label: '', action: () => {}, divider: true },
-    { label: '撤销', shortcut: 'Ctrl+Z', action: () => handleAction(() => editor.chain().focus().undo().run()) },
-    { label: '重做', shortcut: 'Ctrl+Y', action: () => handleAction(() => editor.chain().focus().redo().run()) },
-    { label: '', action: () => {}, divider: true },
-  );
-
-  // Paragraph formatting (always available)
-  items.push(
-    { label: '段落...', action: () => handleAction(() => {
-      // Focus paragraph formatting
-      editor.chain().focus().setParagraphAttrs({ textIndent: '2em', lineHeight: '1.5' }).run();
-    })},
-    { label: '字体...', action: () => handleAction(() => {
-      // Open font properties via right panel
-      import('../../stores/useSidebarStore').then(m => m.useSidebarStore.getState().setActiveTab('text'));
-    })},
-  );
-
-  if (isImage) {
-    items.push(
-      { label: '', action: () => {}, divider: true },
-      { label: '替换图片', action: () => handleAction(() => { /* trigger image replace */ }) },
-      { label: '删除图片', action: () => handleAction(() => {
-        editor.chain().focus().deleteSelection().run();
-      })},
-    );
-  }
-
-  // Calculate position to keep menu within viewport
-  const menuWidth = 200;
-  const menuHeight = items.length * 32 + (items.filter(i => i.divider).length * 8);
+  const menuWidth = 240;
+  const menuHeight = items.length * 34;
   const x = Math.min(menu.x, window.innerWidth - menuWidth - 8);
   const y = Math.min(menu.y, window.innerHeight - menuHeight - 8);
 
   return createPortal(
     <div
       style={{
-        position: 'fixed', left: x, top: y, zIndex: 10000,
-        minWidth: 180, background: '#fff', borderRadius: 8,
-        boxShadow: '0 4px 16px rgba(0,0,0,0.15)', border: '1px solid #e8e8e8',
-        padding: '4px 0', fontSize: 13,
+        position: 'fixed',
+        left: x,
+        top: y,
+        zIndex: 1400,
+        minWidth: 220,
+        background: '#fff',
+        borderRadius: 10,
+        boxShadow: '0 12px 28px rgba(0,0,0,0.16)',
+        border: '1px solid #e8e8e8',
+        padding: '6px 0',
+        fontSize: 13,
       }}
+      onMouseDown={(event) => event.preventDefault()}
     >
-      {items.map((item, i) =>
+      {items.map((item) =>
         item.divider ? (
-          <div key={i} style={{ height: 1, background: '#f0f0f0', margin: '4px 0' }} />
+          <div key={item.key} style={{ height: 1, background: '#f0f0f0', margin: '6px 0' }} />
         ) : (
-          <div
-            key={i}
-            onClick={item.disabled ? undefined : item.action}
+          <button
+            key={item.key}
+            type="button"
+            disabled={item.disabled}
+            onClick={() => void runAction(item.action)}
             style={{
-              padding: '6px 12px', cursor: item.disabled ? 'default' : 'pointer',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              opacity: item.disabled ? 0.4 : 1,
+              width: '100%',
+              border: 'none',
               background: 'transparent',
-              transition: 'background 0.1s',
+              padding: '8px 12px',
+              cursor: item.disabled ? 'default' : 'pointer',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              color: item.disabled ? '#bfbfbf' : item.danger ? '#cf1322' : '#1f1f1f',
+              textAlign: 'left',
             }}
-            onMouseEnter={(e) => { if (!item.disabled) (e.target as HTMLElement).style.background = '#f5f5f5'; }}
-            onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'transparent'; }}
+            onMouseEnter={(event) => {
+              if (!item.disabled) {
+                event.currentTarget.style.background = '#f5f8ff';
+              }
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.background = 'transparent';
+            }}
           >
-            <span>{item.label}</span>
-            {item.shortcut && <span style={{ color: '#999', fontSize: 11, marginLeft: 24 }}>{item.shortcut}</span>}
-          </div>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ width: 14, display: 'inline-flex', justifyContent: 'center' }}>{item.icon}</span>
+              <span>{item.label}</span>
+            </span>
+            <span style={{ fontSize: 11, color: '#8c8c8c' }}>{item.shortcut}</span>
+          </button>
         )
       )}
     </div>,

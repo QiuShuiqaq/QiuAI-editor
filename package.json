@@ -1,34 +1,33 @@
 {
   "name": "qiuai-editor",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "秋AI编辑器 - 科研项目申报书AI辅助写作桌面应用",
   "scripts": {
-    "dev": "node scripts/desktop-launcher.cjs --dev",
-    "dev:server": "pnpm --filter @qiuai/renderer dev",
-    "build": "pnpm --filter @qiuai/shared build && pnpm --filter @qiuai/renderer build",
-    "start": "node scripts/desktop-launcher.cjs --prod",
-    "desktop": "node scripts/desktop-launcher.cjs --dev",
-    "lint": "eslint packages/*/src --ext .ts,.tsx",
+    "dev": "corepack pnpm dev:desktop",
+    "dev:desktop": "node scripts/electron-dev.cjs",
+    "dev:server": "corepack pnpm --filter @qiuai/renderer dev",
+    "build": "corepack pnpm --filter @qiuai/shared build && corepack pnpm --filter @qiuai/main build && corepack pnpm --filter @qiuai/renderer build",
+    "start": "node scripts/run-electron.cjs packages/main/dist/index.js",
+    "desktop": "corepack pnpm dev:desktop",
+    "package": "corepack pnpm build && corepack pnpm dlx electron-builder",
+    "lint": "eslint \"packages/*/src/**/*.{ts,tsx}\"",
     "test": "vitest run",
     "clean": "rimraf packages/*/dist packages/*/node_modules node_modules"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "esbuild"
-    ]
-  },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
     "concurrently": "^9.0.0",
     "cross-env": "^7.0.0",
-    "electron": "^33.4.11",
-    "electron-builder": "^25.0.0",
+    "electron": "42.3.0",
     "eslint": "^9.0.0",
+    "globals": "^17.6.0",
+    "playwright": "^1.60.0",
     "prettier": "^3.0.0",
     "rimraf": "^6.0.0",
     "typescript": "^5.6.0",
+    "typescript-eslint": "^8.60.1",
     "vitest": "^2.0.0"
   }
 }

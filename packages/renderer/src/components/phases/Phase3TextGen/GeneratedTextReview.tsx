@@ -1,6 +1,6 @@
-import { Button, Space, message, Alert } from 'antd';
-import { CheckOutlined, EditOutlined, RedoOutlined } from '@ant-design/icons';
-import { useEditorStore } from '../../../stores/useEditorStore';
+import { Alert, Button, Space, message } from 'antd';
+import { CheckOutlined, RedoOutlined } from '@ant-design/icons';
+import { insertDocumentText } from '../../../services/documentEngineCommands';
 
 interface GeneratedTextReviewProps {
   lastGeneratedText: string;
@@ -17,21 +17,25 @@ export function GeneratedTextReview({
   onRegenerate,
   onClear,
 }: GeneratedTextReviewProps) {
-  const editor = useEditorStore((s) => s.editor);
-
-  const handleInsertToEditor = () => {
-    if (editor && lastGeneratedText) {
-      // Check if selection exists, otherwise insert at cursor
-      editor.commands.insertContent(lastGeneratedText);
-      message.success(`已插入"${sectionTitle}"的生成内容`);
-      onAccept();
+  const handleInsertToEditor = async () => {
+    if (!lastGeneratedText) {
+      return;
     }
+
+    const applied = await insertDocumentText(lastGeneratedText);
+    if (!applied) {
+      message.error('当前文档无法插入生成内容');
+      return;
+    }
+
+    message.success(`已将“${sectionTitle}”的生成内容插入正文`);
+    onAccept();
   };
 
   return (
     <div style={{ marginTop: 8, marginBottom: 16 }}>
       <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>
-        生成结果 — {sectionTitle}
+        生成结果 - {sectionTitle || '当前章节'}
       </div>
 
       {lastGeneratedText ? (
@@ -54,19 +58,10 @@ export function GeneratedTextReview({
           </div>
 
           <Space size="small">
-            <Button
-              type="primary"
-              size="small"
-              icon={<CheckOutlined />}
-              onClick={handleInsertToEditor}
-            >
+            <Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => void handleInsertToEditor()}>
               插入编辑区
             </Button>
-            <Button
-              size="small"
-              icon={<RedoOutlined />}
-              onClick={onRegenerate}
-            >
+            <Button size="small" icon={<RedoOutlined />} onClick={onRegenerate}>
               重新生成
             </Button>
             <Button size="small" onClick={onClear}>
@@ -76,7 +71,7 @@ export function GeneratedTextReview({
         </>
       ) : (
         <Alert
-          message="点击上方「全部生成」按钮，AI将为每个章节生成文本内容"
+          message="点击上方生成按钮后，AI 会先给出预览结果，再由你决定是否写入正文。"
           type="info"
           showIcon
           style={{ fontSize: 12 }}

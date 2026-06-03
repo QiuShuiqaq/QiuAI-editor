@@ -1,13 +1,9 @@
-import { Button, Checkbox, List, message, Tag } from 'antd';
-import {
-  PictureOutlined,
-  TableOutlined,
-  CheckOutlined,
-} from '@ant-design/icons';
+import { Button, Checkbox, List, message } from 'antd';
+import { CheckOutlined, PictureOutlined, TableOutlined } from '@ant-design/icons';
+import { WritingPhase, type FrameworkNode } from '@qiuai/shared';
 import { useFrameworkStore } from '../../../stores/useFrameworkStore';
 import { usePhaseStore } from '../../../stores/usePhaseStore';
 import { useProjectStore } from '../../../stores/useProjectStore';
-import { WritingPhase, type FrameworkNode } from '@qiuai/shared';
 
 function flattenNodes(nodes: FrameworkNode[]): FrameworkNode[] {
   const result: FrameworkNode[] = [];
@@ -20,9 +16,9 @@ function flattenNodes(nodes: FrameworkNode[]): FrameworkNode[] {
 
 export function SlotAssignmentPanel() {
   const { nodes, updateNode } = useFrameworkStore();
-  const setPhase = usePhaseStore((s) => s.setPhase);
-  const doc = useProjectStore((s) => s.doc);
-  const setDoc = useProjectStore((s) => s.setDoc);
+  const setPhase = usePhaseStore((state) => state.setPhase);
+  const doc = useProjectStore((state) => state.doc);
+  const setDoc = useProjectStore((state) => state.setDoc);
 
   const allNodes = flattenNodes(nodes);
 
@@ -42,18 +38,17 @@ export function SlotAssignmentPanel() {
       updatedAt: new Date().toISOString(),
     });
     setPhase(WritingPhase.TEXT_GEN);
-    message.success('板块设置已确认，进入文本生成阶段');
+    message.success('槽位设置已确认，进入文本生成阶段');
   };
 
-  const imageCount = allNodes.filter(n => n.needsImage).length;
-  const tableCount = allNodes.filter(n => n.needsTable).length;
+  const imageCount = allNodes.filter((node) => node.needsImage).length;
+  const tableCount = allNodes.filter((node) => node.needsTable).length;
 
   return (
     <div style={{ padding: '12px 8px' }}>
-      <h3 style={{ marginBottom: 8, fontSize: 14 }}>板块设置</h3>
+      <h3 style={{ marginBottom: 8, fontSize: 14 }}>槽位设置</h3>
       <p style={{ color: '#666', fontSize: 12, marginBottom: 12 }}>
-        为每个章节选择是否需要预留图片和表格位置。
-        图片: {imageCount} | 表格: {tableCount}
+        为每个章节选择是否需要预留图片和表格位置。图片: {imageCount} | 表格: {tableCount}
       </p>
 
       <List
@@ -61,24 +56,21 @@ export function SlotAssignmentPanel() {
         dataSource={allNodes}
         style={{ maxHeight: 400, overflow: 'auto', marginBottom: 12 }}
         renderItem={(node) => (
-          <List.Item
-            style={{ padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}
-          >
+          <List.Item style={{ padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ width: '100%' }}>
               <div style={{ fontSize: 12, marginBottom: 4 }}>
-                {node.level === 1 ? '📁' : node.level === 2 ? '📄' : '📎'}{' '}
-                {node.title}
+                {node.level === 1 ? 'H1' : node.level === 2 ? 'H2' : 'H3'} {node.title}
               </div>
               <div style={{ display: 'flex', gap: 16 }}>
                 <Checkbox
                   checked={node.needsImage}
-                  onChange={(e) => handleToggleImage(node.id, e.target.checked)}
+                  onChange={(event) => handleToggleImage(node.id, event.target.checked)}
                 >
                   <PictureOutlined /> 图片位
                 </Checkbox>
                 <Checkbox
                   checked={node.needsTable}
-                  onChange={(e) => handleToggleTable(node.id, e.target.checked)}
+                  onChange={(event) => handleToggleTable(node.id, event.target.checked)}
                 >
                   <TableOutlined /> 表格位
                 </Checkbox>
@@ -88,14 +80,8 @@ export function SlotAssignmentPanel() {
         )}
       />
 
-      <Button
-        type="primary"
-        icon={<CheckOutlined />}
-        onClick={handleConfirm}
-        block
-        size="large"
-      >
-        确认板块，开始文本生成
+      <Button type="primary" icon={<CheckOutlined />} onClick={handleConfirm} block size="large">
+        确认槽位，开始文本生成
       </Button>
     </div>
   );

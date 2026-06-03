@@ -5,14 +5,22 @@ export class OpenAIProvider implements TextGenerationProvider {
   name = 'openai';
   maxContextTokens = 128000;
 
+  private readonly defaultSystemPrompt =
+    '你是一位专业的科研项目与正式报告写作助手。请使用规范、准确、清晰的中文表达，忠于输入内容，不虚构事实。';
+
   async *generateText(prompt: string, config: AIConfig): AsyncGenerator<string, void, unknown> {
-    const apiKey = config.apiKey || process.env.OPENAI_API_KEY;
+    const inferredApiKey =
+      config.baseURL?.includes('deepseek.com')
+        ? process.env.DEEPSEEK_API_KEY
+        : config.baseURL?.includes('bigmodel.cn')
+          ? process.env.GLM_API_KEY
+          : process.env.OPENAI_API_KEY;
+    const apiKey = config.apiKey || inferredApiKey;
     if (!apiKey) {
-      yield '[错误] 请先在AI设置中配置API Key';
+      yield '[错误] 请先在AI设置中配置 API Key';
       return;
     }
 
-    // OpenAI-compatible API (works for OpenAI, DeepSeek, Zhipu GLM, and other compatible services)
     const base = config.baseURL || 'https://api.openai.com';
     const hasVersion = /\/v\d+\/?$/.test(base);
     const url = hasVersion ? `${base.replace(/\/+$/, '')}/chat/completions` : `${base.replace(/\/+$/, '')}/v1/chat/completions`;
@@ -30,7 +38,7 @@ export class OpenAIProvider implements TextGenerationProvider {
         messages: [
           {
             role: 'system',
-            content: '你是一位专业的科研项目申报书撰写专家。请使用正式、专业的学术语言，遵循中国科研项目申报书规范进行撰写。数据务必准确，结构清晰，逻辑严密。',
+            content: config.systemPrompt || this.defaultSystemPrompt,
           },
           { role: 'user', content: prompt },
         ],
@@ -52,6 +60,8 @@ export class OpenAIProvider implements TextGenerationProvider {
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let emittedContent = false;
+    let reasoningBuffer = '';
 
     while (true) {
       const { done, value } = await reader.read();
@@ -68,12 +78,23 @@ export class OpenAIProvider implements TextGenerationProvider {
 
         try {
           const parsed = JSON.parse(data);
-          const text = parsed?.choices?.[0]?.delta?.content || '';
-          if (text) yield text;
+          const delta = parsed?.choices?.[0]?.delta || {};
+          const content = delta?.content || '';
+          const reasoning = delta?.reasoning_content || '';
+          if (content) {
+            emittedContent = true;
+            yield content;
+          } else if (reasoning) {
+            reasoningBuffer += reasoning;
+          }
         } catch {
-          // Skip malformed JSON
+          // Ignore malformed chunks.
         }
       }
+    }
+
+    if (!emittedContent && reasoningBuffer) {
+      yield reasoningBuffer;
     }
   }
 }

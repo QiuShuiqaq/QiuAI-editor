@@ -10,6 +10,10 @@ function reorder(nodes: FrameworkNode[]): FrameworkNode[] {
   }));
 }
 
+export function normalizeFrameworkTree(nodes: FrameworkNode[]): FrameworkNode[] {
+  return reorder(nodes);
+}
+
 interface FrameworkState {
   nodes: FrameworkNode[];
   addNode: (parentId: string | null, title: string) => void;
@@ -39,7 +43,7 @@ export const useFrameworkStore = create<FrameworkState>((set) => ({
 
       if (parentId === null) {
         newNode.level = 1;
-        const updated = reorder([...state.nodes, newNode]);
+        const updated = normalizeFrameworkTree([...state.nodes, newNode]);
         return { nodes: updated };
       }
 
@@ -50,7 +54,7 @@ export const useFrameworkStore = create<FrameworkState>((set) => ({
             found = true;
             const childLevel = Math.min(node.level + 1, 3) as 1 | 2 | 3;
             newNode.level = childLevel;
-            return { ...node, children: reorder([...node.children, newNode]) };
+            return { ...node, children: normalizeFrameworkTree([...node.children, newNode]) };
           }
           return { ...node, children: addToParent(node.children) };
         });
@@ -59,7 +63,7 @@ export const useFrameworkStore = create<FrameworkState>((set) => ({
       if (!found) {
         // Parent not found, add at root
         newNode.level = 1;
-        return { nodes: reorder([...state.nodes, newNode]) };
+        return { nodes: normalizeFrameworkTree([...state.nodes, newNode]) };
       }
 
       return { nodes: addToParent(state.nodes) };
@@ -69,7 +73,7 @@ export const useFrameworkStore = create<FrameworkState>((set) => ({
   removeNode: (id) => {
     set((state) => {
       const filter = (nodes: FrameworkNode[]): FrameworkNode[] => {
-        return reorder(
+        return normalizeFrameworkTree(
           nodes.filter((n) => n.id !== id).map((n) => ({
             ...n,
             children: filter(n.children),
@@ -92,7 +96,7 @@ export const useFrameworkStore = create<FrameworkState>((set) => ({
     });
   },
 
-  setNodes: (nodes) => set({ nodes: reorder(nodes) }),
+  setNodes: (nodes) => set({ nodes: normalizeFrameworkTree(nodes) }),
 
   moveNode: (id, direction) => {
     set((state) => {
@@ -106,7 +110,7 @@ export const useFrameworkStore = create<FrameworkState>((set) => ({
         if (targetIdx < 0 || targetIdx >= nodes.length) return nodes;
         const arr = [...nodes];
         [arr[idx], arr[targetIdx]] = [arr[targetIdx], arr[idx]];
-        return reorder(arr);
+        return normalizeFrameworkTree(arr);
       };
       return { nodes: moveInArray(state.nodes) };
     });

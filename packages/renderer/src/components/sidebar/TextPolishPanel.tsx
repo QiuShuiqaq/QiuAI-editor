@@ -1,24 +1,41 @@
-import { useState, useCallback, useRef } from 'react';
-import { Select, Button, Space, Divider, message, Input, Collapse } from 'antd';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Button, Collapse, Divider, Select, Space, message } from 'antd';
+import { RobotOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import {
-  RobotOutlined,
-  ThunderboltOutlined,
-  UploadOutlined,
-} from '@ant-design/icons';
-import { IPC_CHANNELS, type IPCResponse, type PolishRequest, type AIConfig, type ReferenceMaterial, type FrameworkNode } from '@qiuai/shared';
-import { usePhaseStore } from '../../stores/usePhaseStore';
-import { useFrameworkStore } from '../../stores/useFrameworkStore';
+  type FrameworkNode,
+  type PolishRequest,
+  type ReferenceMaterial,
+  WritingPhase,
+} from '@qiuai/shared';
+import { generateText, polishText as aiPolish } from '../../services/aiClient';
+import {
+  chunkReferenceMaterial,
+  contextFitsInWindow as ragContextFits,
+  estimateContextTokens,
+  generateDocumentPlan,
+  getNeighborSummaries,
+  retrieveRelevantChunks,
+} from '../../services/ragService';
+import {
+  getCurrentSelectedText,
+  insertDocumentHtml,
+  insertDocumentText,
+  replaceCurrentSelection,
+} from '../../services/documentEngineCommands';
+import { generateAndApplyFullPaperFromOutline } from '../../services/fullPaperGeneration';
 import { useEditorStore } from '../../stores/useEditorStore';
+import { useFrameworkStore } from '../../stores/useFrameworkStore';
+import { usePhaseStore } from '../../stores/usePhaseStore';
 import { useProjectStore } from '../../stores/useProjectStore';
-import { ipcClient } from '../../services/ipcClient';
 import { useSettingsStore } from '../../stores/useSettingsStore';
-import { streamGenerateText, polishText as aiPolish } from '../../services/aiClient';
-import { retrieveRelevantChunks, generateDocumentPlan, getNeighborSummaries, generateSectionSummary, estimateContextTokens, contextFitsInWindow as ragContextFits, chunkReferenceMaterial } from '../../services/ragService';
-import { MaterialUploader } from '../phases/Phase3TextGen/MaterialUploader';
 import { GenerationConfig } from '../phases/Phase3TextGen/GenerationConfig';
-import { GenerationProgress, type SectionProgress, buildProgressFromFramework } from '../phases/Phase3TextGen/GenerationProgress';
+import {
+  buildProgressFromFramework,
+  GenerationProgress,
+  type SectionProgress,
+} from '../phases/Phase3TextGen/GenerationProgress';
 import { GeneratedTextReview } from '../phases/Phase3TextGen/GeneratedTextReview';
-import { WritingPhase } from '@qiuai/shared';
+import { MaterialUploader } from '../phases/Phase3TextGen/MaterialUploader';
 
 const polishStyles = [
   { value: 'formal', label: '正式公文风格' },
@@ -27,143 +44,120 @@ const polishStyles = [
   { value: 'expand', label: '扩展详述' },
 ];
 
-export function TextPolishPanel() {
-  const phase = usePhaseStore((s) => s.currentPhase);
-  const frameworkNodes = useFrameworkStore((s) => s.nodes);
-  const editor = useEditorStore((s) => s.editor);
-  const selectedText = useEditorStore((s) => s.selectedText);
-  const doc = useProjectStore((s) => s.doc);
-  const setDoc = useProjectStore((s) => s.setDoc);
-  const settings = useSettingsStore((s) => s.settings);
-  const getActiveConfig = useSettingsStore((s) => s.getActiveConfig);
+function flattenFrameworkNodes(nodes: FrameworkNode[]): FrameworkNode[] {
+  return nodes.flatMap((node) => [node, ...flattenFrameworkNodes(node.children)]);
+}
 
-  // Polish state
+export function TextPolishPanel() {
+  const phase = usePhaseStore((state) => state.currentPhase);
+  const frameworkNodes = useFrameworkStore((state) => state.nodes);
+  const selectedText = useEditorStore((state) => state.selectedText);
+  const doc = useProjectStore((state) => state.doc);
+  const setDoc = useProjectStore((state) => state.setDoc);
+  const settings = useSettingsStore((state) => state.settings);
+  const getWritingConfig = useSettingsStore((state) => state.getWritingConfig);
+  const setPhase = usePhaseStore((state) => state.setPhase);
+
   const [polishStyle, setPolishStyle] = useState<string>('formal');
   const [polishing, setPolishing] = useState(false);
-  const [polishResult, setPolishResult] = useState<string>('');
-
-  // Text generation state (Phase 3)
+  const [polishResult, setPolishResult] = useState('');
   const [materials, setMaterials] = useState<ReferenceMaterial[]>([]);
-  const [sections, setSections] = useState<SectionProgress[]>(
-    buildProgressFromFramework(frameworkNodes)
-  );
+  const [sections, setSections] = useState<SectionProgress[]>(buildProgressFromFramework(frameworkNodes));
   const [isGenerating, setIsGenerating] = useState(false);
   const [lastGeneratedText, setLastGeneratedText] = useState('');
   const [lastSectionTitle, setLastSectionTitle] = useState('');
+  const [isGeneratingFullPaper, setIsGeneratingFullPaper] = useState(false);
   const abortRef = useRef(false);
 
-  // Polish handler
+  const flattenedNodes = useMemo(() => flattenFrameworkNodes(frameworkNodes), [frameworkNodes]);
+
+  const updateSectionStatus = useCallback((nodeId: string, patch: Partial<SectionProgress>) => {
+    setSections((prev) =>
+      prev.map((section) => (section.nodeId === nodeId ? { ...section, ...patch } : section))
+    );
+  }, []);
+
+  const handleMaterialsChange = useCallback(
+    (nextMaterials: ReferenceMaterial[]) => {
+      setMaterials(nextMaterials);
+      setDoc({
+        ...doc,
+        updatedAt: new Date().toISOString(),
+        referenceMaterials: nextMaterials,
+        documentState: {
+          ...doc.documentState,
+          referenceMaterials: nextMaterials,
+        },
+      });
+    },
+    [doc, setDoc]
+  );
+
   const handlePolish = async () => {
-    const text = selectedText || editor?.getText() || '';
-    if (!text.trim()) {
+    const text = (await getCurrentSelectedText()).trim();
+    if (!text) {
       message.warning('请先在编辑区选中需要润色的文本');
       return;
     }
 
     setPolishing(true);
     try {
-      const aiConfig = getActiveConfig();
-
-      // Use real AI client if API key is set, otherwise fall back to IPC/mock
       const result = await aiPolish({
         originalText: text,
         style: polishStyle as PolishRequest['style'],
-        aiConfig,
+        aiConfig: getWritingConfig(),
       });
-
       setPolishResult(result);
-    } catch {
-      message.error('润色请求失败');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '润色请求失败');
     } finally {
       setPolishing(false);
     }
   };
 
-  const handleApplyPolish = () => {
-    if (polishResult && editor) {
-      editor.commands.insertContent(polishResult);
-      setPolishResult('');
-      message.success('润色结果已应用');
+  const handleApplyPolish = async () => {
+    if (!polishResult) {
+      return;
     }
+
+    const applied = await replaceCurrentSelection(polishResult);
+    if (!applied) {
+      message.error('当前文档无法应用润色结果');
+      return;
+    }
+
+    setPolishResult('');
+    message.success('润色结果已应用到正文');
   };
 
-  // Text generation handlers (Phase 3)
-  const flattenNodes = useCallback((nodes: FrameworkNode[]): FrameworkNode[] => {
-    const result: FrameworkNode[] = [];
-    for (const node of nodes) {
-      result.push(node);
-      result.push(...flattenNodes(node.children));
-    }
-    return result;
-  }, []);
-
   const generateOneSection = async (node: FrameworkNode) => {
-    if (!editor) return;
-
-    // Update section status to generating
-    setSections((prev) =>
-      prev.map((s) =>
-        s.nodeId === node.id ? { ...s, status: 'generating' as const } : s
-      )
-    );
+    updateSectionStatus(node.id, { status: 'generating', error: undefined });
 
     try {
-      const aiConfig = getActiveConfig();
+      const aiConfig = getWritingConfig();
+      await insertDocumentHtml(`<h${Math.min(node.level, 3)}>${node.title}</h${Math.min(node.level, 3)}><p></p>`);
 
-      // Insert heading into editor first
-      editor.commands.insertContent(
-        `<h${Math.min(node.level, 3)}>${node.title}</h${Math.min(node.level, 3)}><p></p>`
-      );
-
-      // === RAG Context Building ===
-      // 1. Chunk all reference materials
-      const allChunks = materials.flatMap((m) => chunkReferenceMaterial(m));
-
-      // 2. Retrieve relevant chunks for this section
+      const allChunks = materials.flatMap((material) => chunkReferenceMaterial(material));
       const headingPath = [node.title];
       const relevantChunks = retrieveRelevantChunks(
-        allChunks.length > 0 ? allChunks : materials.flatMap((m) => m.chunks),
+        allChunks.length > 0 ? allChunks : materials.flatMap((material) => material.chunks),
         node.title,
         headingPath,
         settings.dataKeywords || [],
-        8 // top-K
+        8
       );
 
-      // 3. Build document plan from framework
-      const documentPlan = doc.documentPlan || generateDocumentPlan(
-        useFrameworkStore.getState().nodes,
-        doc.title
-      );
-
-      // 4. Get neighbor summaries for context continuity
-      const neighborSummaries = getNeighborSummaries(
-        new Map(), // Will be populated after each section generation
-        node.id,
-        useFrameworkStore.getState().nodes,
-        2
-      );
-
-      // 5. Check context token budget
-      const estimatedTokens = estimateContextTokens(
-        node.title,
-        relevantChunks,
-        neighborSummaries,
-        documentPlan
-      );
-
+      const documentPlan =
+        doc.documentPlan || generateDocumentPlan(useFrameworkStore.getState().nodes, doc.title);
+      const neighborSummaries = getNeighborSummaries(new Map(), node.id, useFrameworkStore.getState().nodes, 2);
+      const estimatedTokens = estimateContextTokens(node.title, relevantChunks, neighborSummaries, documentPlan);
       const maxTokens = aiConfig.maxTokens || 8192;
-      const fitsInWindow = ragContextFits(estimatedTokens, maxTokens);
+      const finalChunks =
+        !ragContextFits(estimatedTokens, maxTokens) && relevantChunks.length > 3
+          ? relevantChunks.slice(0, 3)
+          : relevantChunks;
 
-      // If too many tokens, trim chunks to fit
-      let finalChunks = relevantChunks;
-      if (!fitsInWindow && relevantChunks.length > 3) {
-        // Reduce to top 3 most relevant chunks
-        finalChunks = relevantChunks.slice(0, 3);
-      }
-
-      // Use real AI streaming client with RAG context
-      let fullText = '';
-      const generator = streamGenerateText({
+      const result = await generateText({
         sectionId: node.id,
         sectionTitle: node.title,
         headingPath,
@@ -172,52 +166,67 @@ export function TextPolishPanel() {
         documentPlan,
         dataKeywords: settings.dataKeywords || [],
         aiConfig,
+        existingPaperSpineMemory: doc.documentState.paperSpineMemories.find((item) => item.sectionId === node.id),
       });
 
-      for await (const chunk of generator) {
-        fullText += chunk;
-        // Update the review panel in real-time
-        setLastGeneratedText(fullText);
-        setLastSectionTitle(node.title);
+      const fullText = result.content || '';
+      setLastGeneratedText(fullText);
+      setLastSectionTitle(node.title);
+
+      if (result.paperSpineEnhancement && result.paperSpineSource !== 'reused') {
+        const currentDoc = useProjectStore.getState().doc;
+        const nextMemories = [
+          ...(currentDoc.documentState.paperSpineMemories || []).filter((item) => item.sectionId !== node.id),
+          {
+            sectionId: node.id,
+            sectionTitle: node.title,
+            enhancement: result.paperSpineEnhancement,
+            generatedAt: new Date().toISOString(),
+          },
+        ];
+
+        setDoc({
+          ...currentDoc,
+          updatedAt: new Date().toISOString(),
+          documentState: {
+            ...currentDoc.documentState,
+            paperSpineMemories: nextMemories,
+          },
+        });
       }
 
-      // Insert generated content into editor
       if (fullText && !fullText.startsWith('[错误]') && !fullText.startsWith('[提示]')) {
-        editor.commands.insertContent(fullText);
+        await insertDocumentText(fullText);
       }
 
-      setSections((prev) =>
-        prev.map((s) =>
-          s.nodeId === node.id ? { ...s, status: 'done' as const } : s
-        )
-      );
-    } catch (err: any) {
-      setSections((prev) =>
-        prev.map((s) =>
-          s.nodeId === node.id
-            ? { ...s, status: 'error' as const, error: err.message }
-            : s
-        )
-      );
-      message.error(`生成"${node.title}"失败: ${err.message}`);
+      updateSectionStatus(node.id, { status: 'done' });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '生成失败';
+      updateSectionStatus(node.id, { status: 'error', error: detail });
+      message.error(`生成“${node.title}”失败：${detail}`);
     }
   };
 
   const handleGenerateAll = async () => {
-    if (materials.length === 0) {
-      message.warning('请先上传参考资料');
+    if (flattenedNodes.length === 0) {
+      message.warning('请先导入文档大纲');
       return;
     }
 
     abortRef.current = false;
     setIsGenerating(true);
-    const allNodes = flattenNodes(frameworkNodes);
+    setSections(
+      flattenedNodes.map((node) => ({
+        nodeId: node.id,
+        title: node.title,
+        status: 'pending' as const,
+      }))
+    );
 
-    // Reset all sections to pending
-    setSections(allNodes.map((n) => ({ nodeId: n.id, title: n.title, status: 'pending' as const })));
-
-    for (const node of allNodes) {
-      if (abortRef.current) break;
+    for (const node of flattenedNodes) {
+      if (abortRef.current) {
+        break;
+      }
       await generateOneSection(node);
     }
 
@@ -225,18 +234,65 @@ export function TextPolishPanel() {
     message.success('全部章节生成完成');
   };
 
+  const handleGenerateFullPaper = async () => {
+    if (flattenedNodes.length === 0) {
+      message.warning('请先导入文档大纲');
+      return;
+    }
+
+    setIsGeneratingFullPaper(true);
+    setIsGenerating(true);
+    setSections(
+      flattenedNodes.map((node) => ({
+        nodeId: node.id,
+        title: node.title,
+        status: 'pending' as const,
+      }))
+    );
+
+    try {
+      await generateAndApplyFullPaperFromOutline({
+        aiConfig: getWritingConfig(),
+        referenceMaterials: materials,
+        dataKeywords: settings.dataKeywords || [],
+        shouldAbort: () => abortRef.current,
+        onProgress: (progress) => {
+          if (!progress.nodeId) {
+            return;
+          }
+
+          if (progress.stage === 'section-start') {
+            updateSectionStatus(progress.nodeId, { status: 'generating', error: undefined });
+          }
+
+          if (progress.stage === 'section-done') {
+            updateSectionStatus(progress.nodeId, { status: 'done', error: undefined });
+          }
+        },
+      });
+
+      setPhase(WritingPhase.TEXT_GEN);
+      message.success('已根据当前大纲和内置论文规范生成完整论文');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '整篇论文生成失败');
+    } finally {
+      setIsGeneratingFullPaper(false);
+      setIsGenerating(false);
+    }
+  };
+
   const handleGenerateSection = async (nodeId: string) => {
-    const allNodes = flattenNodes(frameworkNodes);
-    const node = allNodes.find((n) => n.id === nodeId);
-    if (!node) return;
+    const node = flattenedNodes.find((item) => item.id === nodeId);
+    if (!node) {
+      return;
+    }
     await generateOneSection(node);
   };
 
-  // Render different content based on phase
   const renderPhase3Content = () => (
     <>
       <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-        <RobotOutlined /> AI文本生成
+        <RobotOutlined /> AI 文本生成
       </h4>
 
       <Collapse
@@ -246,24 +302,16 @@ export function TextPolishPanel() {
           {
             key: 'materials',
             label: '上传参考资料',
-            children: (
-              <MaterialUploader
-                materials={materials}
-                onMaterialsChange={setMaterials}
-              />
-            ),
+            children: <MaterialUploader materials={materials} onMaterialsChange={handleMaterialsChange} />,
           },
           {
             key: 'config',
-            label: 'AI模型设置',
+            label: 'AI 模型设置',
             children: (
               <GenerationConfig
-                config={getActiveConfig()}
+                config={getWritingConfig()}
                 onChange={(cfg) => {
-                  useSettingsStore.getState().updateProviderConfig(
-                    settings.activeProvider,
-                    cfg
-                  );
+                  useSettingsStore.getState().updateProviderConfig('deepseek', cfg);
                 }}
               />
             ),
@@ -272,6 +320,22 @@ export function TextPolishPanel() {
       />
 
       <Divider style={{ margin: '12px 0' }} />
+
+      <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }} size={8}>
+        <Button
+          type="primary"
+          block
+          size="small"
+          loading={isGeneratingFullPaper}
+          disabled={isGenerating}
+          onClick={() => void handleGenerateFullPaper()}
+        >
+          {isGeneratingFullPaper ? '正在生成整篇论文...' : '按论文规范生成全文'}
+        </Button>
+        <div style={{ fontSize: 11, color: '#666', lineHeight: 1.6 }}>
+          导入大纲后可直接生成完整论文。未上传参考资料时也可以生成；上传资料后，AI 会优先结合材料提升正文质量。
+        </div>
+      </Space>
 
       <GenerationProgress
         sections={sections}
@@ -288,12 +352,9 @@ export function TextPolishPanel() {
           setLastSectionTitle('');
         }}
         onRegenerate={() => {
-          const allNodes = flattenNodes(frameworkNodes);
-          const currentSection = allNodes.find(
-            (n) => n.title === lastSectionTitle
-          );
+          const currentSection = flattenedNodes.find((item) => item.title === lastSectionTitle);
           if (currentSection) {
-            generateOneSection(currentSection);
+            void generateOneSection(currentSection);
           }
         }}
         onClear={() => {
@@ -307,9 +368,7 @@ export function TextPolishPanel() {
   const renderPolishContent = () => (
     <>
       <div style={{ marginBottom: 16 }}>
-        <label style={{ display: 'block', marginBottom: 6, fontSize: 13 }}>
-          润色风格
-        </label>
+        <label style={{ display: 'block', marginBottom: 6, fontSize: 13 }}>润色风格</label>
         <Select
           value={polishStyle}
           onChange={setPolishStyle}
@@ -322,14 +381,14 @@ export function TextPolishPanel() {
       <div style={{ marginBottom: 8, fontSize: 12, color: '#666' }}>
         {selectedText
           ? `已选中 ${selectedText.length} 个字符`
-          : '提示：在编辑区选中需润色的文本'}
+          : '提示：请先在编辑区选中需要润色的文本'}
       </div>
 
       <Button
         type="primary"
         icon={<ThunderboltOutlined />}
         loading={polishing}
-        onClick={handlePolish}
+        onClick={() => void handlePolish()}
         block
         size="small"
         style={{ marginBottom: 8 }}
@@ -337,10 +396,10 @@ export function TextPolishPanel() {
         开始润色
       </Button>
 
-      {polishResult && (
+      {polishResult ? (
         <>
           <div style={{ marginTop: 8, marginBottom: 8 }}>
-            <label style={{ fontSize: 12, fontWeight: 500 }}>润色结果：</label>
+            <label style={{ fontSize: 12, fontWeight: 500 }}>润色结果</label>
             <div
               style={{
                 background: '#f6ffed',
@@ -357,7 +416,7 @@ export function TextPolishPanel() {
             </div>
           </div>
           <Space>
-            <Button size="small" onClick={handleApplyPolish} type="primary">
+            <Button size="small" onClick={() => void handleApplyPolish()} type="primary">
               应用到编辑区
             </Button>
             <Button size="small" onClick={() => setPolishResult('')}>
@@ -365,7 +424,7 @@ export function TextPolishPanel() {
             </Button>
           </Space>
         </>
-      )}
+      ) : null}
     </>
   );
 

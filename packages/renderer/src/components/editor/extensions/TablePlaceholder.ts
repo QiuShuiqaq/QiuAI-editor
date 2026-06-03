@@ -32,7 +32,7 @@ export const TablePlaceholder = Node.create<TablePlaceholderOptions>({
       caption: { default: '表格标题' },
       sectionId: { default: '' },
       tableIndex: { default: 0 },
-      headers: { default: ['列1', '列2', '列3'] },
+      headers: { default: ['列 1', '列 2', '列 3'] },
       rows: { default: [['', '', ''], ['', '', ''], ['', '', '']] },
     };
   },
@@ -43,14 +43,9 @@ export const TablePlaceholder = Node.create<TablePlaceholderOptions>({
 
   renderHTML({ node }) {
     const { tableNumber, caption, headers, rows } = node.attrs;
-    const headerHTML = (headers as string[])
-      .map((h: string) => `<th>${h}</th>`)
-      .join('');
+    const headerHTML = (headers as string[]).map((header: string) => `<th>${header}</th>`).join('');
     const bodyHTML = (rows as string[][])
-      .map(
-        (row: string[]) =>
-          `<tr>${row.map((cell: string) => `<td>${cell}</td>`).join('')}</tr>`
-      )
+      .map((row: string[]) => `<tr>${row.map((cell: string) => `<td>${cell}</td>`).join('')}</tr>`)
       .join('');
 
     return [
@@ -60,12 +55,7 @@ export const TablePlaceholder = Node.create<TablePlaceholderOptions>({
         class: 'table-placeholder-node',
         contenteditable: 'false',
       },
-      [
-        'table',
-        { class: 'three-line-placeholder-table' },
-        ['thead', {}, ['tr', {}, headerHTML]],
-        ['tbody', {}, bodyHTML],
-      ],
+      ['table', { class: 'three-line-placeholder-table' }, ['thead', {}, ['tr', {}, headerHTML]], ['tbody', {}, bodyHTML]],
       [
         'div',
         {
@@ -73,7 +63,7 @@ export const TablePlaceholder = Node.create<TablePlaceholderOptions>({
           contenteditable: 'true',
           'data-caption': caption,
         },
-        `表${tableNumber} ${caption}`,
+        `表 ${tableNumber} ${caption}`,
       ],
     ];
   },
@@ -82,12 +72,11 @@ export const TablePlaceholder = Node.create<TablePlaceholderOptions>({
     return {
       insertTablePlaceholder:
         (attrs) =>
-        ({ commands }) => {
-          return commands.insertContent({
+        ({ commands }) =>
+          commands.insertContent({
             type: this.name,
             attrs,
-          });
-        },
+          }),
     };
   },
 });

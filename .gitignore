@@ -7,7 +7,10 @@ out/
 .env
 .env.local
 drafts/
+DATA/*
+!DATA/.gitkeep
 release/
 *.exe
 *.msi
 .DS_Store
+output/

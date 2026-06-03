@@ -1,8 +1,15 @@
 import { IpcMain, dialog } from 'electron';
-import { IPC_CHANNELS, type IPCResponse, type DraftMeta, type QiuAiDocument } from '@qiuai/shared';
+import {
+  IPC_CHANNELS,
+  type IPCResponse,
+  type DraftMeta,
+  type QiuAiDocument,
+  type ReferenceSource,
+} from '@qiuai/shared';
 import { draftService } from '../services/draftService';
 import { pdfService } from '../services/pdfService';
 import { docxService } from '../services/docxService';
+import { crossrefService } from '../services/crossrefService';
 
 export function registerFileHandlers(ipcMain: IpcMain) {
   ipcMain.handle(IPC_CHANNELS.FILE_SAVE_DRAFT, async (_event, doc: QiuAiDocument): Promise<IPCResponse<DraftMeta>> => {
@@ -66,4 +73,16 @@ export function registerFileHandlers(ipcMain: IpcMain) {
       return { success: false, error: err.message };
     }
   });
+
+  ipcMain.handle(
+    IPC_CHANNELS.REFERENCE_IMPORT_DOI,
+    async (_event, doi: string): Promise<IPCResponse<ReferenceSource>> => {
+      try {
+        const source = await crossrefService.importByDoi(doi);
+        return { success: true, data: source };
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    }
+  );
 }

@@ -1,18 +1,50 @@
+import type { JSONContent } from '@tiptap/core';
 import { useState, useMemo } from 'react';
 import { Button, List, Tag, Modal, Space, message } from 'antd';
 import {
   AlertOutlined,
   CheckOutlined,
   EditOutlined,
-  CloseOutlined,
 } from '@ant-design/icons';
+import { replaceDocumentContent } from '../../services/documentEngineCommands';
 import { useEditorStore } from '../../stores/useEditorStore';
 
 interface ReviewItem {
+  id: string;
   text: string;
   explanation: string;
-  from: number;
-  to: number;
+  markerText: string;
+}
+
+const REVIEW_PATTERN = /\[REVIEW:([^\]]*)\]([\s\S]*?)\[\/REVIEW\]/g;
+
+function transformReviewNode(
+  node: JSONContent | undefined,
+  matcher: (fullMatch: string, explanation: string, text: string) => string
+): JSONContent | undefined {
+  if (!node) {
+    return node;
+  }
+
+  const nextNode: JSONContent = {
+    ...node,
+  };
+
+  if (typeof nextNode.text === 'string') {
+    nextNode.text = nextNode.text.replace(
+      REVIEW_PATTERN,
+      (_fullMatch, explanation: string, text: string) =>
+        matcher(String(_fullMatch), explanation, text)
+    );
+  }
+
+  if (Array.isArray(nextNode.content)) {
+    nextNode.content = nextNode.content
+      .map((child) => transformReviewNode(child, matcher))
+      .filter(Boolean) as JSONContent[];
+  }
+
+  return nextNode;
 }
 
 export function DataReviewOverlay() {
@@ -25,20 +57,19 @@ export function DataReviewOverlay() {
 
     const items: ReviewItem[] = [];
     const content = editor.getJSON();
-    const reviewRegex = /\[REVIEW:([^\]]*)\]([^\[]*)\[\/REVIEW\]/g;
-
-    function walk(node: any) {
+    function walk(node: JSONContent | undefined) {
       if (!node) return;
       if (node.type === 'text' && node.text) {
         let match;
-        while ((match = reviewRegex.exec(node.text)) !== null) {
+        while ((match = REVIEW_PATTERN.exec(node.text)) !== null) {
           items.push({
+            id: `${match[1]}-${items.length}`,
             explanation: match[1],
             text: match[2],
-            from: 0,
-            to: 0,
+            markerText: match[0],
           });
         }
+        REVIEW_PATTERN.lastIndex = 0;
       }
       if (node.content) {
         for (const child of node.content) {
@@ -53,41 +84,45 @@ export function DataReviewOverlay() {
 
   const handleAccept = (item: ReviewItem) => {
     if (!editor) return;
-    // Replace [REVIEW:xxx]text[/REVIEW] with just the text
-    const fullMatch = `[REVIEW:${item.explanation}]${item.text}[/REVIEW]`;
-    const { from, to } = editor.state.selection;
+    let replaced = false;
+    const cleaned = transformReviewNode(editor.getJSON() as JSONContent, (fullMatch, _explanation, text) => {
+      if (!replaced && fullMatch === item.markerText) {
+        replaced = true;
+        return text;
+      }
+      return fullMatch;
+    });
 
-    // Search and replace in the editor content
-    const docText = editor.getText();
-    const idx = docText.indexOf(item.text);
-    if (idx !== -1) {
-      editor
-        .chain()
-        .focus()
-        .setTextSelection({ from: idx, to: idx + fullMatch.length })
-        .insertContent(item.text)
-        .run();
+    if (!replaced || !cleaned) {
+      message.warning('未找到对应的数据标记');
+      return;
     }
 
-    message.success('已接受该数据');
+    void replaceDocumentContent(cleaned).then((success) => {
+      if (success) {
+        message.success('已接受该数据');
+        return;
+      }
+      message.error('接受数据标记失败');
+    });
   };
 
   const handleAcceptAll = () => {
     if (!editor) return;
-    const docText = editor.getText();
-    // Replace all REVIEW tags with just the content
-    const cleaned = docText.replace(
-      /\[REVIEW:[^\]]*\]([^\[]*)\[\/REVIEW\]/g,
-      '$1'
-    );
-    editor.commands.setContent(
-      cleaned
-        .split('\n')
-        .map((line) => (line.trim() ? `<p>${line}</p>` : ''))
-        .join('')
-    );
-    message.success('已接受全部数据标记');
-    setVisible(false);
+    const cleaned = transformReviewNode(editor.getJSON() as JSONContent, (_fullMatch, _explanation, text) => text);
+    if (!cleaned) {
+      message.warning('当前没有可处理的数据标记');
+      return;
+    }
+
+    void replaceDocumentContent(cleaned).then((success) => {
+      if (success) {
+        message.success('已接受全部数据标记');
+        setVisible(false);
+        return;
+      }
+      message.error('批量接受数据标记失败');
+    });
   };
 
   return (
@@ -138,7 +173,7 @@ export function DataReviewOverlay() {
           <List
             dataSource={reviewItems}
             style={{ maxHeight: 400, overflow: 'auto' }}
-            renderItem={(item, idx) => (
+            renderItem={(item) => (
               <List.Item
                 style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}
                 actions={[

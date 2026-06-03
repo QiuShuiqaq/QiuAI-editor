@@ -1,5 +1,11 @@
 import { create } from 'zustand';
-import { generateId, WritingPhase, type QiuAiDocument } from '@qiuai/shared';
+import {
+  createEmptyDocumentState,
+  generateId,
+  syncDocumentWithState,
+  WritingPhase,
+  type QiuAiDocument,
+} from '@qiuai/shared';
 
 interface ProjectState {
   doc: QiuAiDocument;
@@ -11,9 +17,10 @@ interface ProjectState {
 
 function createEmptyDoc(): QiuAiDocument {
   const now = new Date().toISOString();
-  return {
+
+  return syncDocumentWithState({
     id: generateId(),
-    title: '未命名申报书',
+    title: '未命名文档',
     createdAt: now,
     updatedAt: now,
     currentPhase: WritingPhase.FRAMEWORK,
@@ -22,19 +29,28 @@ function createEmptyDoc(): QiuAiDocument {
     editorContent: {},
     referenceMaterials: [],
     documentPlan: '',
-  };
+    documentState: createEmptyDocumentState(),
+  });
 }
 
 export const useProjectStore = create<ProjectState>((set) => ({
   doc: createEmptyDoc(),
-  setDoc: (doc) => set({ doc }),
+  setDoc: (doc) => set({ doc: syncDocumentWithState(doc) }),
   setTitle: (title) =>
-    set((s) => ({
-      doc: { ...s.doc, title, updatedAt: new Date().toISOString() },
+    set((state) => ({
+      doc: syncDocumentWithState({
+        ...state.doc,
+        title,
+        updatedAt: new Date().toISOString(),
+      }),
     })),
   setCurrentPhase: (phase) =>
-    set((s) => ({
-      doc: { ...s.doc, currentPhase: phase, updatedAt: new Date().toISOString() },
+    set((state) => ({
+      doc: syncDocumentWithState({
+        ...state.doc,
+        currentPhase: phase,
+        updatedAt: new Date().toISOString(),
+      }),
     })),
   reset: () => set({ doc: createEmptyDoc() }),
 }));

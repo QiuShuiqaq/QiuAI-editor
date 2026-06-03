@@ -1,4 +1,5 @@
 import { Node, mergeAttributes } from '@tiptap/core';
+import { createDocumentAnchorId } from '../documentReferenceUtils';
 
 export interface CustomParagraphOptions {
   HTMLAttributes: Record<string, unknown>;
@@ -20,6 +21,8 @@ export interface ParagraphAttrs {
   spaceBefore?: string | null;
   spaceAfter?: string | null;
   textAlign?: string | null;
+  class?: string | null;
+  styleName?: string | null;
 }
 
 function buildStyle(attrs: ParagraphAttrs): string {
@@ -53,6 +56,8 @@ export const CustomParagraph = Node.create<CustomParagraphOptions>({
       spaceBefore: { default: null },
       spaceAfter: { default: '8px' },
       textAlign: { default: null },
+      class: { default: 'body-text' },
+      styleName: { default: 'Normal' },
     };
   },
 
@@ -63,10 +68,24 @@ export const CustomParagraph = Node.create<CustomParagraphOptions>({
   renderHTML({ node, HTMLAttributes }) {
     const attrs = node.attrs as ParagraphAttrs;
     const style = buildStyle(attrs);
+    const text = node.textContent || '';
+    const anchorKind =
+      attrs.class === 'image-text' || attrs.styleName === 'Caption'
+        ? 'image'
+        : attrs.class === 'table-text' || attrs.styleName === 'TableCaption'
+        ? 'table'
+        : null;
+    const anchorId = anchorKind && text ? createDocumentAnchorId(anchorKind, text) : undefined;
 
     return [
       'p',
-      mergeAttributes(HTMLAttributes, { style: style || undefined }),
+      mergeAttributes(HTMLAttributes, {
+        class: attrs.class || undefined,
+        'data-style-name': attrs.styleName || undefined,
+        id: anchorId,
+        'data-anchor-id': anchorId,
+        style: style || undefined,
+      }),
       0,
     ];
   },

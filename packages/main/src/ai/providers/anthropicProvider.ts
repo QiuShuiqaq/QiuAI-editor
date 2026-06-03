@@ -5,10 +5,13 @@ export class AnthropicProvider implements TextGenerationProvider {
   name = 'anthropic';
   maxContextTokens = 200000;
 
+  private readonly defaultSystemPrompt =
+    '你是一位专业的科研项目与正式报告写作助手。请使用规范、准确、清晰的中文表达，忠于输入内容，不虚构事实。';
+
   async *generateText(prompt: string, config: AIConfig): AsyncGenerator<string, void, unknown> {
     const apiKey = config.apiKey || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      yield '[错误] 请先在AI设置中配置Anthropic API Key';
+      yield '[错误] 请先在AI设置中配置 Anthropic API Key';
       return;
     }
 
@@ -24,7 +27,7 @@ export class AnthropicProvider implements TextGenerationProvider {
         model: config.model || 'claude-sonnet-4-6',
         max_tokens: config.maxTokens || 8192,
         temperature: config.temperature ?? 0.7,
-        system: '你是一位专业的科研项目申报书撰写专家。请使用正式、专业的学术语言，遵循中国科研项目申报书规范进行撰写。数据务必准确，结构清晰，逻辑严密。',
+        system: config.systemPrompt || this.defaultSystemPrompt,
         messages: [{ role: 'user', content: prompt }],
         stream: true,
       }),
@@ -63,7 +66,7 @@ export class AnthropicProvider implements TextGenerationProvider {
           const text = parsed?.delta?.text || parsed?.content_block?.text || '';
           if (text) yield text;
         } catch {
-          // Skip malformed JSON chunks
+          // Ignore malformed chunks.
         }
       }
     }

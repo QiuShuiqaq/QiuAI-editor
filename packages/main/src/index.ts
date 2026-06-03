@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
+import { loadLocalEnv } from './config/loadLocalEnv';
 import { registerFileHandlers } from './ipc/fileHandlers';
 import { registerAIHandlers } from './ipc/aiHandlers';
 import { registerExportHandlers } from './ipc/exportHandlers';
@@ -12,7 +13,7 @@ function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
-    title: '秋AI编辑器 - 科研项目申报书AI辅助写作',
+    title: 'QiuAI Editor - 项目报告编辑器',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -23,7 +24,6 @@ function createWindow() {
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../renderer/dist/index.html'));
   }
@@ -36,6 +36,7 @@ function registerIPC() {
 }
 
 app.whenReady().then(() => {
+  loadLocalEnv();
   registerIPC();
   createWindow();
 

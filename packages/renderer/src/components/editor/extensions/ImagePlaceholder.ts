@@ -12,6 +12,7 @@ declare module '@tiptap/core' {
         caption: string;
         sectionId: string;
         imageIndex: number;
+        imageData?: string | null;
       }) => ReturnType;
     };
   }
@@ -39,7 +40,12 @@ export const ImagePlaceholder = Node.create<ImagePlaceholderOptions>({
   },
 
   renderHTML({ node }) {
-    const { figureNumber, caption } = node.attrs;
+    const { figureNumber, caption, imageData } = node.attrs as {
+      figureNumber: string;
+      caption: string;
+      imageData?: string | null;
+    };
+
     return [
       'div',
       {
@@ -47,20 +53,18 @@ export const ImagePlaceholder = Node.create<ImagePlaceholderOptions>({
         class: 'image-placeholder-node',
         contenteditable: 'false',
       },
-      [
-        'div',
-        { class: 'image-placeholder-box' },
-        [
-          'div',
-          { class: 'image-placeholder-icon' },
-          '🖼',
-        ],
-        [
-          'div',
-          { class: 'image-placeholder-hint' },
-          '双击或拖放图片到此处',
-        ],
-      ],
+      imageData
+        ? [
+            'div',
+            { class: 'image-placeholder-box image-placeholder-filled' },
+            ['img', { src: imageData, alt: caption, class: 'image-placeholder-preview' }],
+          ]
+        : [
+            'div',
+            { class: 'image-placeholder-box' },
+            ['div', { class: 'image-placeholder-icon' }, '🖼'],
+            ['div', { class: 'image-placeholder-hint' }, '双击或拖放图片到此处'],
+          ],
       [
         'div',
         {
@@ -68,7 +72,7 @@ export const ImagePlaceholder = Node.create<ImagePlaceholderOptions>({
           contenteditable: 'true',
           'data-caption': caption,
         },
-        `图${figureNumber} ${caption}`,
+        `图 ${figureNumber} ${caption}`,
       ],
     ];
   },
@@ -77,12 +81,11 @@ export const ImagePlaceholder = Node.create<ImagePlaceholderOptions>({
     return {
       insertImagePlaceholder:
         (attrs) =>
-        ({ commands }) => {
-          return commands.insertContent({
+        ({ commands }) =>
+          commands.insertContent({
             type: this.name,
             attrs,
-          });
-        },
+          }),
     };
   },
 });

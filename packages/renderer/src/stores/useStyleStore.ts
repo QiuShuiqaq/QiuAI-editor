@@ -15,6 +15,7 @@ export interface ParagraphStyle {
   textIndent: string | null;
   spaceBefore: string | null;
   spaceAfter: string | null;
+  className: string | null;
 }
 
 export interface NamedStyle {
@@ -23,10 +24,9 @@ export interface NamedStyle {
   text: Partial<TextStyle>;
   paragraph: Partial<ParagraphStyle>;
   headingLevel?: number;
-  nextStyle?: string;  // Style for next paragraph after Enter
+  nextStyle?: string;
 }
 
-// Default Word-like styles
 const DEFAULT_STYLES: NamedStyle[] = [
   {
     name: 'Normal',
@@ -45,6 +45,7 @@ const DEFAULT_STYLES: NamedStyle[] = [
       textIndent: '2em',
       spaceBefore: null,
       spaceAfter: '8px',
+      className: 'body-text',
     },
     nextStyle: 'Normal',
   },
@@ -65,6 +66,7 @@ const DEFAULT_STYLES: NamedStyle[] = [
       textIndent: null,
       spaceBefore: '24px',
       spaceAfter: '16px',
+      className: null,
     },
     headingLevel: 1,
     nextStyle: 'Normal',
@@ -86,6 +88,7 @@ const DEFAULT_STYLES: NamedStyle[] = [
       textIndent: null,
       spaceBefore: '20px',
       spaceAfter: '12px',
+      className: null,
     },
     headingLevel: 2,
     nextStyle: 'Normal',
@@ -107,8 +110,72 @@ const DEFAULT_STYLES: NamedStyle[] = [
       textIndent: null,
       spaceBefore: '16px',
       spaceAfter: '10px',
+      className: null,
     },
     headingLevel: 3,
+    nextStyle: 'Normal',
+  },
+  {
+    name: 'Caption',
+    displayName: '图注',
+    text: {
+      fontFamily: 'SimSun',
+      fontSize: '10.5pt',
+      bold: false,
+      italic: false,
+      underline: false,
+      color: '#666666',
+    },
+    paragraph: {
+      textAlign: 'center',
+      lineHeight: '1.4',
+      textIndent: null,
+      spaceBefore: '4px',
+      spaceAfter: '16px',
+      className: 'image-text',
+    },
+    nextStyle: 'Normal',
+  },
+  {
+    name: 'TableCaption',
+    displayName: '表注',
+    text: {
+      fontFamily: 'SimSun',
+      fontSize: '10.5pt',
+      bold: false,
+      italic: false,
+      underline: false,
+      color: '#666666',
+    },
+    paragraph: {
+      textAlign: 'center',
+      lineHeight: '1.4',
+      textIndent: null,
+      spaceBefore: '4px',
+      spaceAfter: '16px',
+      className: 'table-text',
+    },
+    nextStyle: 'Normal',
+  },
+  {
+    name: 'Quote',
+    displayName: '引用',
+    text: {
+      fontFamily: 'FangSong',
+      fontSize: '14pt',
+      bold: false,
+      italic: true,
+      underline: false,
+      color: '#444444',
+    },
+    paragraph: {
+      textAlign: null,
+      lineHeight: '1.6',
+      textIndent: '2em',
+      spaceBefore: '8px',
+      spaceAfter: '12px',
+      className: 'quote-text',
+    },
     nextStyle: 'Normal',
   },
 ];
@@ -125,13 +192,11 @@ export const useStyleStore = create<StyleState>((set, get) => ({
 
   updateStyle: (name, updates) => {
     set((state) => ({
-      styles: state.styles.map((s) =>
-        s.name === name ? { ...s, ...updates } : s
-      ),
+      styles: state.styles.map((style) => (style.name === name ? { ...style, ...updates } : style)),
     }));
   },
 
-  getStyle: (name) => get().styles.find((s) => s.name === name),
+  getStyle: (name) => get().styles.find((style) => style.name === name),
 
   resetStyles: () => set({ styles: [...DEFAULT_STYLES] }),
 }));

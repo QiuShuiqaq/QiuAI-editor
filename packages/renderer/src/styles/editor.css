@@ -174,7 +174,9 @@
 .tiptap-editor .page-number-field { color: #999; font-size: 0.85em; }
 
 /* ===== Columns ===== */
-.tiptap-editor.columns-mode {
+.tiptap-editor.columns-mode,
+.qiu-page-layout-surface.columns-mode .tiptap-editor,
+.qiu-page-layout-surface.columns-mode .ProseMirror {
   column-count: var(--editor-columns, 1);
   column-gap: var(--editor-column-gap, 12mm);
   column-rule: var(--editor-column-rule, none);
@@ -259,7 +261,37 @@
 }
 
 /* ProseMirror */
-.ProseMirror { outline: none; min-height: 600px; }
+.ProseMirror {
+  outline: none;
+  min-height: 100%;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.ProseMirror.qiu-paged-flow {
+  position: relative;
+}
+.qiu-page-layout-surface {
+  box-sizing: border-box;
+}
+.qiu-page-layout-surface,
+.qiu-page-layout-surface .tiptap-editor,
+.qiu-page-layout-surface .ProseMirror {
+  cursor: text;
+}
+.qiu-page-layout-surface .tiptap-editor,
+.qiu-page-layout-surface .ProseMirror {
+  width: 100%;
+  max-width: 100%;
+}
+.qiu-page-layout-surface .qiu-page-flow-spacer {
+  width: 100%;
+}
+.qiu-page-hit-mask {
+  pointer-events: auto;
+  user-select: none;
+  background: transparent;
+}
 .ProseMirror p.is-editor-empty:first-child::before {
   color: #adb5bd;
   content: attr(data-placeholder);
@@ -347,4 +379,15 @@
 .a4-page-wrapper { --page-border:none; --page-bg-color:#fff; }
 .a4-page-wrapper.has-page-border { border:var(--page-border); }
 .a4-page-wrapper.has-page-shadow { box-shadow:var(--page-border-shadow); }
+
+/* Override legacy garbled placeholder copy */
+.image-placeholder-caption:empty::before {
+  content: '图编号 图片标题（双击编辑）';
+  color: #bfbfbf;
+}
+
+.table-placeholder-caption:empty::before {
+  content: '表编号 表格标题（双击编辑）';
+  color: #bfbfbf;
+}
 
